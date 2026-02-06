@@ -1,0 +1,66 @@
+name: Deploy Backend to Production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**'  # Trigger on any change in backend repo
+
+env:
+  AWS_REGION: ap-southeast-1
+  EKS_CLUSTER_NAME: scl-cluster
+  ECR_REPOSITORY: scl-backend
+  NAMESPACE: scl
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Deploy to Kubernetes
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Update deployment with new image
+          kubectl set image deployment/scl-backend scl-backend=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -n ${{ env.NAMESPACE }} || \
+          echo "Deployment not found. Please ensure infrastructure repo has deployed the base deployment first."
+          
+          # Also update init container if it exists
+          kubectl set image deployment/scl-backend prisma-migrate=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -n ${{ env.NAMESPACE }} || true
+          
+          # Wait for rollout
+          kubectl rollout status deployment/scl-backend -n ${{ env.NAMESPACE }} --timeout=5m || true
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app=scl-backend
+          kubectl get svc -n ${{ env.NAMESPACE }} -l app=scl-backend

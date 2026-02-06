@@ -1,0 +1,38 @@
+import { Module } from '@nestjs/common'
+import { ConfigModule } from '@nestjs/config'
+import { CacheModule } from '@nestjs/cache-manager'
+import { ScheduleModule } from '@nestjs/schedule'
+import { TerminusModule } from '@nestjs/terminus'
+import { APP_INTERCEPTOR } from '@nestjs/core'
+import { GameModule } from './game/game.module'
+import { WordpressModule } from './wordpress/wordpress.module'
+import { HealthModule } from './health/health.module'
+import { MetricsModule } from './metrics/metrics.module'
+import { MetricsInterceptor } from './metrics/metrics.interceptor'
+import { RedisConfig } from './config/redis.config'
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['.env.local', '.env'],
+    }),
+    CacheModule.registerAsync({
+      useClass: RedisConfig,
+      isGlobal: true,
+    }),
+    ScheduleModule.forRoot(),
+    TerminusModule,
+    MetricsModule,
+    GameModule,
+    WordpressModule,
+    HealthModule,
+  ],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: MetricsInterceptor,
+    },
+  ],
+})
+export class AppModule {}

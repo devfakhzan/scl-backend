@@ -1,0 +1,982 @@
+import { Injectable, BadRequestException, NotFoundException, OnModuleInit, HttpException, HttpStatus } from '@nestjs/common'
+import { Inject } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
+import { CACHE_MANAGER } from '@nestjs/cache-manager'
+import { Cache, Store } from 'cache-manager'
+import { Cron, CronExpression } from '@nestjs/schedule'
+import { PrismaService, PrismaClient } from '../prisma/prisma.service'
+import { MetricsService } from '../metrics/metrics.service'
+import { SubmitScoreDto } from './dto/submit-score.dto'
+import { GetPlayerStatusDto } from './dto/get-player-status.dto'
+
+// Define types from Prisma client method return types
+type GameSession = Awaited<ReturnType<PrismaClient['gameSession']['create']>>
+type GameSettings = Awaited<ReturnType<PrismaClient['gameSettings']['findUnique']>>
+type Player = Awaited<ReturnType<PrismaClient['player']['findUnique']>>
+
+@Injectable()
+export class GameService implements OnModuleInit {
+  private readonly prisma: PrismaClient
+
+  constructor(
+    prismaService: PrismaService,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private configService: ConfigService,
+    private metricsService: MetricsService,
+  ) {
+    // PrismaService extends PrismaClient, so we can safely assign it
+    // This ensures TypeScript recognizes all PrismaClient methods
+    this.prisma = prismaService
+  }
+
+  /**
+   * Resolve the configured length of a "game day" in milliseconds.
+   * Defaults to a real-world calendar day if not overridden in settings.
+   */
+  private getDayDurationMs(settings: GameSettings): number {
+    const secondsPerDay = settings.secondsPerDay && settings.secondsPerDay > 0 ? settings.secondsPerDay : 86400
+    return secondsPerDay * 1000
+  }
+
+  /**
+   * Compute time-related anchors (today, yesterday, nextDayStart, daysSinceLaunch)
+   * based on the configured game-day duration.
+   *
+   * In production, secondsPerDay is left unset so this collapses to real
+   * calendar days. In dev/testing, you can set secondsPerDay (e.g. 120)
+   * to simulate "2 minutes = 1 day" without changing game logic.
+   */
+  private getGameDayInfo(settings: GameSettings) {
+    const nowMs = Date.now()
+
+    const launchDate = new Date(settings.launchDate)
+    launchDate.setUTCHours(0, 0, 0, 0)
+
+    const dayMs = this.getDayDurationMs(settings)
+    const launchMs = launchDate.getTime()
+
+    const daysSinceLaunch = Math.max(0, Math.floor((nowMs - launchMs) / dayMs))
+    const todayMs = launchMs + daysSinceLaunch * dayMs
+    const yesterdayMs = todayMs - dayMs
+    const nextDayMs = todayMs + dayMs
+
+    const today = new Date(todayMs)
+    const yesterday = new Date(yesterdayMs)
+    const nextDayStart = new Date(nextDayMs)
+
+    return {
+      today,
+      yesterday,
+      nextDayStart,
+      daysSinceLaunch,
+      dayMs,
+      launchMs,
+    }
+  }
+
+  /**
+   * Normalize a date to its virtual day boundary based on the game settings.
+   * This ensures date comparisons work correctly with secondsPerDay.
+   */
+  private normalizeToVirtualDay(date: Date, settings: GameSettings): Date {
+    const launchDate = new Date(settings.launchDate)
+    launchDate.setUTCHours(0, 0, 0, 0)
+    const dayMs = this.getDayDurationMs(settings)
+    const launchMs = launchDate.getTime()
+    
+    const daysSinceLaunch = Math.max(0, Math.floor((date.getTime() - launchMs) / dayMs))
+    const virtualDayMs = launchMs + daysSinceLaunch * dayMs
+    
+    return new Date(virtualDayMs)
+  }
+
+  async getPlayerStatus(walletAddress: string): Promise<GetPlayerStatusDto> {
+    try {
+      const settings = await this.getSettings()
+      const player = await this.findOrCreatePlayer(walletAddress)
+      const { today, yesterday, nextDayStart, daysSinceLaunch } = this.getGameDayInfo(settings)
+
+    const launchDate = new Date(settings.launchDate)
+    launchDate.setUTCHours(0, 0, 0, 0)
+    // Total lifetime plays allowed: 1 per day since launch (inclusive)
+    const totalPlaysAllowed = Math.max(1, daysSinceLaunch + 1)
+
+    // Count all plays since launch (lifetime usage of tries)
+    // Use virtual day boundary for comparison
+    const normalizedLaunchDate = this.normalizeToVirtualDay(launchDate, settings)
+    const totalPlaysUsed = await this.prisma.gameSession.count({
+      where: {
+        playerId: player.id,
+        playDate: {
+          gte: normalizedLaunchDate,
+        },
+      },
+    })
+
+    const playsRemaining = Math.max(0, totalPlaysAllowed - totalPlaysUsed)
+
+    // Compute next available play time if user is out of plays
+    let nextAvailableAt: string | null = null
+    let secondsToNextPlay: number | null = null
+    if (playsRemaining <= 0) {
+      nextAvailableAt = nextDayStart.toISOString()
+      secondsToNextPlay = Math.max(0, Math.floor((nextDayStart.getTime() - Date.now()) / 1000))
+    }
+
+    // Check if player has a valid streak (played yesterday or this is their first ever play)
+    // Normalize yesterday to virtual day boundary for comparison
+    // Since playDate is stored as DATE, we query a range and then normalize to check virtual day boundaries
+    const normalizedYesterday = this.normalizeToVirtualDay(yesterday, settings)
+    const normalizedToday = this.normalizeToVirtualDay(today, settings)
+    
+    // Query sessions in a date range that might include the virtual yesterday
+    // We use a wider range to account for multiple virtual days on the same calendar date
+    const dayBefore = new Date(normalizedYesterday)
+    dayBefore.setDate(dayBefore.getDate() - 1)
+    const dayAfter = new Date(normalizedToday)
+    dayAfter.setDate(dayAfter.getDate() + 1)
+    
+    const recentSessions = await this.prisma.gameSession.findMany({
+      where: {
+        playerId: player.id,
+        playDate: {
+          gte: dayBefore,
+          lte: dayAfter,
+        },
+      },
+    })
+    
+    // Filter to only sessions that actually fall in the virtual yesterday
+    // When playDate is stored, it's stored as the virtual day boundary (today), so we can compare directly
+    const playedYesterday = recentSessions.find(session => {
+      // playDate is stored as DATE, so we need to create a Date object and normalize it
+      const sessionDate = new Date(session.playDate)
+      sessionDate.setUTCHours(0, 0, 0, 0)
+      const normalizedSessionDate = this.normalizeToVirtualDay(sessionDate, settings)
+      return normalizedSessionDate.getTime() === normalizedYesterday.getTime()
+    })
+
+    const hasValidStreak = playedYesterday !== null || player.lastPlayDate === null
+
+    // Use weekly scores if weekly reset is enabled, otherwise use lifetime scores
+    const useWeeklyScores = settings.weeklyResetEnabled ?? false
+    const displayScore = useWeeklyScores ? (player.weeklyScore ?? 0) : player.totalScore
+    const displayStreak = useWeeklyScores ? (player.weeklyStreak ?? 0) : player.currentStreak
+    const displayLongestStreak = useWeeklyScores ? (player.weeklyLongestStreak ?? 0) : player.longestStreak
+
+    const result: GetPlayerStatusDto = {
+      walletAddress: player.walletAddress,
+      totalScore: displayScore,
+      lifetimeTotalScore: player.lifetimeTotalScore ?? player.totalScore, // Always include lifetime for reference
+      currentStreak: displayStreak,
+      longestStreak: displayLongestStreak,
+      playsRemaining,
+      canPlay: playsRemaining > 0,
+      streakMultiplier: this.calculateStreakMultiplier(settings, displayStreak),
+      hasValidStreak,
+      nextAvailableAt,
+      secondsToNextPlay,
+      weeklyResetEnabled: useWeeklyScores,
+    }
+
+    // Add debug info when secondsPerDay is set (testing/debugging mode)
+    if (settings.secondsPerDay && settings.secondsPerDay > 0) {
+      const dayMs = this.getDayDurationMs(settings)
+      const virtualDayEnd = new Date(today.getTime() + dayMs - 1)
+      
+      // Calculate which virtual day the last play was on
+      let lastPlayVirtualDay: number | null = null
+      if (player.lastPlayDate) {
+        const normalizedLastPlay = this.normalizeToVirtualDay(new Date(player.lastPlayDate), settings)
+        const launchMs = new Date(settings.launchDate).setUTCHours(0, 0, 0, 0)
+        lastPlayVirtualDay = Math.floor((normalizedLastPlay.getTime() - launchMs) / dayMs)
+      }
+
+      const debugInfo: any = {
+        secondsPerDay: settings.secondsPerDay,
+        virtualDay: daysSinceLaunch,
+        virtualDayStart: today.toISOString(),
+        virtualDayEnd: virtualDayEnd.toISOString(),
+        nextVirtualDayStart: nextDayStart.toISOString(),
+        totalPlaysAllowed,
+        totalPlaysUsed,
+        lastPlayVirtualDay,
+        launchDate: (settings.launchDate instanceof Date 
+          ? settings.launchDate 
+          : new Date(settings.launchDate)).toISOString(),
+      }
+
+      // Add week number if weekly resets are enabled
+      if (settings.weeklyResetEnabled) {
+        debugInfo.currentWeekNumber = this.calculateWeekNumber(settings, today)
+      }
+
+      result.debugInfo = debugInfo
+    }
+
+      // Track metrics
+      this.metricsService.playerStatusChecks.inc({
+        can_play: result.canPlay ? 'true' : 'false',
+      })
+
+      return result
+    } catch (error: unknown) {
+      // Log unexpected errors for debugging
+      console.error(`[GameService] Error getting player status for ${walletAddress}:`, error)
+      
+      // Convert Prisma/database errors to appropriate HTTP exceptions
+      const prismaError = error as { code?: string; message?: string; status?: number }
+      if (prismaError?.code?.startsWith('P')) {
+        // Prisma errors
+        throw new HttpException('Database error occurred', HttpStatus.INTERNAL_SERVER_ERROR)
+      }
+      
+      // Re-throw as 500 if we don't know what it is
+      throw new HttpException(
+        prismaError?.message || 'Internal server error',
+        prismaError?.status || HttpStatus.INTERNAL_SERVER_ERROR
+      )
+    }
+  }
+
+  async submitScore(dto: SubmitScoreDto): Promise<GameSession> {
+    try {
+      const settings = await this.getSettings()
+      const player = await this.findOrCreatePlayer(dto.walletAddress)
+      const { today, yesterday } = this.getGameDayInfo(settings)
+
+      // Check if player has any plays remaining (lifetime since launch)
+      const status = await this.getPlayerStatus(dto.walletAddress)
+      if (!status.canPlay) {
+        // Use 429 (Too Many Requests) instead of 400 - this is rate limiting, not a bad request
+        throw new HttpException('No plays remaining', HttpStatus.TOO_MANY_REQUESTS)
+      }
+
+    // Check/update streak – only the first play of each day can affect streak
+    // Normalize lastPlay to virtual day boundary for proper comparison
+    const lastPlay = player.lastPlayDate ? new Date(player.lastPlayDate) : null
+    const normalizedLastPlay = lastPlay ? this.normalizeToVirtualDay(lastPlay, settings) : null
+    const normalizedYesterday = this.normalizeToVirtualDay(yesterday, settings)
+
+    // Only update streak if this is the first play today
+    const isFirstPlayToday = !normalizedLastPlay || normalizedLastPlay.getTime() < today.getTime()
+
+    const isWeeklyResetEnabled = settings.weeklyResetEnabled ?? false
+    
+    // Update streak (both lifetime and weekly if enabled)
+    let newStreak = isWeeklyResetEnabled ? (player.weeklyStreak ?? 0) : player.currentStreak
+    let newLifetimeStreak = player.currentStreak
+    
+    if (isFirstPlayToday) {
+      if (!normalizedLastPlay) {
+        // First ever play
+        newStreak = 1
+        newLifetimeStreak = 1
+      } else if (normalizedLastPlay.getTime() === normalizedYesterday.getTime()) {
+        // Consecutive day → streak continues
+        newStreak = (isWeeklyResetEnabled ? (player.weeklyStreak ?? 0) : player.currentStreak) + 1
+        newLifetimeStreak = player.currentStreak + 1
+      } else {
+        // Gap in days → streak resets
+        newStreak = 1
+        newLifetimeStreak = 1
+      }
+
+      // Update lifetime streak
+      player.currentStreak = newLifetimeStreak
+      if (newLifetimeStreak > player.longestStreak) {
+        player.longestStreak = newLifetimeStreak
+      }
+
+      // Update weekly streak if enabled
+      if (isWeeklyResetEnabled) {
+        player.weeklyStreak = newStreak
+        if (newStreak > (player.weeklyLongestStreak ?? 0)) {
+          player.weeklyLongestStreak = newStreak
+        }
+      }
+
+      // Record streak day (handle race conditions - if already exists, that's fine)
+      try {
+        await this.prisma.playerStreak.create({
+          data: {
+            playerId: player.id,
+            streakDate: today,
+            streakCount: newLifetimeStreak, // Always record lifetime streak
+          },
+        })
+      } catch (error: unknown) {
+        // If streak already exists for today (race condition), that's fine - continue
+        const prismaError = error as { code?: string }
+        if (prismaError?.code === 'P2002') {
+          // Unique constraint violation - streak already recorded today
+          console.log(`[GameService] Streak already recorded for player ${player.id} on ${today.toISOString()}`)
+        } else {
+          // Other database errors should be logged but not fail the request
+          console.error(`[GameService] Error recording streak:`, error)
+        }
+      }
+    } else {
+      // Not first play today, keep existing streaks
+      newStreak = isWeeklyResetEnabled ? (player.weeklyStreak ?? 0) : player.currentStreak
+    }
+
+    // Calculate final score with streak multiplier
+    const streakMultiplier = this.calculateStreakMultiplier(settings, newStreak)
+    const finalScore = Math.floor(dto.score * streakMultiplier)
+
+    // Track metrics
+    this.metricsService.scoresSubmitted.inc({
+      has_streak_multiplier: newStreak > 1 ? 'true' : 'false',
+    })
+    this.metricsService.streakMultipliers.observe(
+      { streak_length: newStreak.toString() },
+      streakMultiplier,
+    )
+    
+    // Update active players metric when a score is submitted (async, don't wait)
+    this.updateActivePlayersMetric().catch(err => {
+      console.error('[Metrics] Error updating active players after score submission:', err)
+    })
+
+    // Calculate week number for this session
+    const weekNumber = settings.weeklyResetEnabled ? this.calculateWeekNumber(settings, today) : null
+
+    // Create game session
+    const session = await this.prisma.gameSession.create({
+      data: {
+        playerId: player.id,
+        score: dto.score,
+        playDate: today,
+        weekNumber,
+        streakMultiplier,
+        finalScore,
+        gameData: dto.gameData,
+      },
+    })
+
+    // Update player totals
+    player.totalScore += finalScore
+    player.lastPlayDate = today
+    
+    const updateData: any = {
+      totalScore: player.totalScore,
+      currentStreak: player.currentStreak,
+      longestStreak: player.longestStreak,
+      lastPlayDate: player.lastPlayDate,
+    }
+    
+    // Update weekly scores if enabled
+    if (isWeeklyResetEnabled) {
+      updateData.weeklyScore = (player.weeklyScore ?? 0) + finalScore
+      updateData.weeklyStreak = player.weeklyStreak ?? 0
+      updateData.weeklyLongestStreak = player.weeklyLongestStreak ?? 0
+    }
+    
+    await this.prisma.player.update({
+      where: { id: player.id },
+      data: updateData,
+    })
+
+    // Invalidate caches
+    await this.cacheManager.del(`player:${dto.walletAddress}`)
+    
+    // Invalidate all leaderboard caches (both weekly and lifetime)
+    // Since we can't easily pattern-match delete with cache-manager, we'll use Redis directly
+    try {
+      const store = (this.cacheManager as Cache & { store?: Store & { mdel?: (...keys: string[]) => Promise<void> } }).store
+      if (store && 'keys' in store && 'mdel' in store && typeof store.keys === 'function' && typeof store.mdel === 'function') {
+        // Get all leaderboard cache keys
+        const leaderboardKeys = await store.keys('leaderboard:*')
+        if (leaderboardKeys && leaderboardKeys.length > 0) {
+          await store.mdel(...leaderboardKeys)
+          console.log(`[Cache] Invalidated ${leaderboardKeys.length} leaderboard cache keys`)
+        }
+      }
+    } catch (cacheError) {
+      console.log(`[Cache] Error invalidating leaderboard cache:`, cacheError)
+      // Continue - cache invalidation failure shouldn't break score submission
+    }
+
+    return session
+    } catch (error: unknown) {
+      // If it's already an HttpException (like 429), re-throw it
+      if (error instanceof HttpException) {
+        throw error
+      }
+      
+      // Log unexpected errors for debugging
+      console.error(`[GameService] Error submitting score for ${dto.walletAddress}:`, error)
+      
+      // Convert Prisma/database errors to appropriate HTTP exceptions
+      const prismaError = error as { code?: string; message?: string; status?: number }
+      if (prismaError?.code === 'P2002') {
+        // Unique constraint violation - could be race condition
+        throw new HttpException('Score submission conflict - please try again', HttpStatus.CONFLICT)
+      } else if (prismaError?.code?.startsWith('P')) {
+        // Other Prisma errors
+        throw new HttpException('Database error occurred', HttpStatus.INTERNAL_SERVER_ERROR)
+      }
+      
+      // Re-throw as 500 if we don't know what it is
+      throw new HttpException(
+        prismaError?.message || 'Internal server error',
+        prismaError?.status || HttpStatus.INTERNAL_SERVER_ERROR
+      )
+    }
+  }
+
+  async getLeaderboard(limit = 10, page = 1, userWalletAddress?: string) {
+    const settings = await this.getSettings()
+    const useWeeklyScores = settings.weeklyResetEnabled ?? false
+    const mode = useWeeklyScores ? 'weekly' : 'lifetime'
+    
+    // Build cache keys
+    const pageCacheKey = `leaderboard:${mode}:page:${page}:limit:${limit}`
+    const userCacheKey = userWalletAddress ? `leaderboard:${mode}:user:${userWalletAddress}` : null
+    
+    // Try to get from cache first
+    let cacheHit = false
+    try {
+      const cacheOpStart = Date.now()
+      const cachedPage = await this.cacheManager.get<any>(pageCacheKey)
+      const cachedUser = userCacheKey ? await this.cacheManager.get<any>(userCacheKey) : null
+      const cacheOpDuration = (Date.now() - cacheOpStart) / 1000
+      
+      this.metricsService.cacheOperations.observe(
+        { operation: 'get', cache_key_pattern: 'leaderboard:*' },
+        cacheOpDuration,
+      )
+      
+      if (cachedPage && (!userWalletAddress || cachedUser)) {
+        // Cache hit - return from Redis (no DB query needed!)
+        console.log(`[Cache] ✅ Leaderboard cache HIT: ${pageCacheKey}`)
+        this.metricsService.cacheHits.inc({ cache_key_pattern: 'leaderboard:*' })
+        this.metricsService.leaderboardViews.inc({ mode })
+        cacheHit = true
+        return {
+          ...cachedPage,
+          userRank: cachedUser?.userRank ?? cachedPage.userRank,
+          userEntry: cachedUser?.userEntry ?? cachedPage.userEntry,
+        }
+      } else {
+        console.log(`[Cache] ❌ Leaderboard cache MISS: ${pageCacheKey} - fetching from DB`)
+        this.metricsService.cacheMisses.inc({ cache_key_pattern: 'leaderboard:*' })
+      }
+    } catch (cacheError) {
+      console.log(`[Cache] Error reading leaderboard cache:`, cacheError)
+      this.metricsService.redisErrors.inc({ error_type: 'cache_read_error' })
+      // Continue to fetch from database
+    }
+    
+    const orderByField = useWeeklyScores ? 'weeklyScore' : 'totalScore'
+    
+    // Get total count
+    const totalCount = await this.prisma.player.count()
+    
+    // Calculate pagination
+    const skip = (page - 1) * limit
+    
+    // Get players for current page
+    // Order by score descending, then by ID ascending for consistent ordering when scores are equal
+    const players = await this.prisma.player.findMany({
+      orderBy: [
+        { [orderByField]: 'desc' },
+        { id: 'asc' }, // Secondary sort for consistent ordering when scores are equal
+      ],
+      skip,
+      take: limit,
+    })
+
+    // Find user's rank if wallet address provided
+    let userRank: number | null = null
+    let userEntry: any = null
+    if (userWalletAddress) {
+      // Count players with higher score
+      const user = await this.prisma.player.findUnique({
+        where: { walletAddress: userWalletAddress },
+      })
+      
+      if (user) {
+        const userScore = useWeeklyScores ? (user.weeklyScore ?? 0) : user.totalScore
+        const userId = user.id
+        
+        // Count players with strictly higher scores OR same score but lower ID (earlier creation)
+        // This ensures consistent ranking when scores are equal
+        const playersAbove = await this.prisma.player.count({
+          where: {
+            OR: [
+              {
+                [orderByField]: {
+                  gt: userScore,
+                },
+              },
+              {
+                AND: [
+                  { [orderByField]: userScore },
+                  { id: { lt: userId } }, // Players with same score but created earlier (lower ID)
+                ],
+              },
+            ],
+          },
+        })
+        userRank = playersAbove + 1
+        
+        // Get user's entry with surrounding context
+        const userStreak = useWeeklyScores ? (user.weeklyStreak ?? 0) : user.currentStreak
+        const userLongestStreak = useWeeklyScores ? (user.weeklyLongestStreak ?? 0) : user.longestStreak
+        
+        userEntry = {
+          rank: userRank,
+          walletAddress: user.walletAddress,
+          totalScore: userScore,
+          currentStreak: userStreak,
+          longestStreak: userLongestStreak,
+          streakMultiplier: this.calculateStreakMultiplier(settings, userStreak),
+        }
+      }
+    }
+
+    const leaderboard = players.map((p, index) => {
+      const score = useWeeklyScores ? (p.weeklyScore ?? 0) : p.totalScore
+      const streak = useWeeklyScores ? (p.weeklyStreak ?? 0) : p.currentStreak
+      const longestStreak = useWeeklyScores ? (p.weeklyLongestStreak ?? 0) : p.longestStreak
+      
+      return {
+        rank: skip + index + 1,
+        walletAddress: p.walletAddress,
+        totalScore: score,
+        currentStreak: streak,
+        longestStreak: longestStreak,
+        streakMultiplier: this.calculateStreakMultiplier(settings, streak),
+      }
+    })
+
+    // Calculate next reset time if weekly resets are enabled
+    let nextResetTime: string | null = null
+    if (useWeeklyScores) {
+      nextResetTime = this.calculateNextResetTime(settings).toISOString()
+    }
+
+    const result = {
+      entries: leaderboard,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit),
+      },
+      userRank,
+      userEntry,
+      nextResetTime,
+      weeklyResetEnabled: useWeeklyScores,
+    }
+    
+    // Cache the results (after fetching from DB)
+    try {
+      const ttlMs = 30 * 1000 // 30 seconds TTL for leaderboard
+      const cacheSetStart = Date.now()
+      
+      // Cache the page result
+      await this.cacheManager.set(pageCacheKey, {
+        entries: result.entries,
+        pagination: result.pagination,
+        nextResetTime: result.nextResetTime,
+        weeklyResetEnabled: result.weeklyResetEnabled,
+        // Don't cache userRank/userEntry in page cache - cache separately
+      }, ttlMs)
+      const cacheSetDuration = (Date.now() - cacheSetStart) / 1000
+      this.metricsService.cacheOperations.observe(
+        { operation: 'set', cache_key_pattern: 'leaderboard:*' },
+        cacheSetDuration,
+      )
+      console.log(`[Cache] ✅ Cached leaderboard page: ${pageCacheKey} (TTL: 30s)`)
+      
+      // Cache user-specific data separately if provided
+      if (userCacheKey && userWalletAddress) {
+        await this.cacheManager.set(userCacheKey, {
+          userRank: result.userRank,
+          userEntry: result.userEntry,
+        }, ttlMs)
+        console.log(`[Cache] ✅ Cached user leaderboard data: ${userCacheKey} (TTL: 30s)`)
+      }
+    } catch (cacheError) {
+      console.log(`[Cache] Error caching leaderboard:`, cacheError)
+      this.metricsService.redisErrors.inc({ error_type: 'cache_write_error' })
+      // Continue - caching failure shouldn't break the request
+    }
+    
+    // Track leaderboard view (only for cache misses, cache hits already tracked above)
+    if (!cacheHit) {
+      this.metricsService.leaderboardViews.inc({ mode })
+    }
+    
+    return result
+  }
+
+  async getPlayerHistory(walletAddress: string, limit = 50): Promise<GameSession[]> {
+    const player = await this.prisma.player.findUnique({
+      where: { walletAddress },
+    })
+
+    if (!player) {
+      throw new NotFoundException('Player not found')
+    }
+
+    return this.prisma.gameSession.findMany({
+      where: { playerId: player.id },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    })
+  }
+
+  private async findOrCreatePlayer(walletAddress: string): Promise<Player> {
+    const cacheKey = `player:${walletAddress}`
+    const cacheStart = Date.now()
+    const cached = await this.cacheManager.get<Player>(cacheKey)
+    const cacheDuration = (Date.now() - cacheStart) / 1000
+    
+    this.metricsService.cacheOperations.observe(
+      { operation: 'get', cache_key_pattern: 'player:*' },
+      cacheDuration,
+    )
+    
+    if (cached) {
+      this.metricsService.cacheHits.inc({ cache_key_pattern: 'player:*' })
+      return cached
+    }
+    
+    this.metricsService.cacheMisses.inc({ cache_key_pattern: 'player:*' })
+
+    let player = await this.prisma.player.findUnique({
+      where: { walletAddress },
+    })
+
+    if (!player) {
+      const settings = await this.getSettings()
+      player = await this.prisma.player.create({
+        data: {
+          walletAddress,
+          launchDate: settings.launchDate,
+          totalScore: 0,
+          currentStreak: 0,
+          longestStreak: 0,
+        },
+      })
+    }
+
+    const cacheSetStart = Date.now()
+    await this.cacheManager.set(cacheKey, player, 3600) // Cache for 1 hour
+    const cacheSetDuration = (Date.now() - cacheSetStart) / 1000
+    this.metricsService.cacheOperations.observe(
+      { operation: 'set', cache_key_pattern: 'player:*' },
+      cacheSetDuration,
+    )
+    return player
+  }
+
+  private calculateStreakMultiplier(settings: GameSettings, streak: number): number {
+    if (streak <= 1) return settings.streakBaseMultiplier
+    return settings.streakBaseMultiplier + (streak - 1) * settings.streakIncrementPerDay
+  }
+
+  /**
+   * Calculate the next reset time based on weekly reset settings.
+   * Returns the date/time when the next weekly reset will occur.
+   */
+  private calculateNextResetTime(settings: GameSettings): Date {
+    const now = new Date(Date.now())
+    const resetDay = settings.weeklyResetDay ?? 0 // 0 = Sunday, 1 = Monday, etc.
+    
+    if (settings.secondsPerDay && settings.secondsPerDay > 0) {
+      // Debug mode: Use virtual weeks
+      const dayMs = this.getDayDurationMs(settings)
+      const launchDate = new Date(settings.launchDate)
+      launchDate.setUTCHours(0, 0, 0, 0)
+      const launchMs = launchDate.getTime()
+      
+      const daysSinceLaunch = Math.floor((now.getTime() - launchMs) / dayMs)
+      const currentWeek = Math.floor(daysSinceLaunch / 7)
+      const nextWeekStart = launchMs + (currentWeek + 1) * 7 * dayMs
+      
+      return new Date(nextWeekStart)
+    } else {
+      // Production mode: Use real calendar weeks
+      const currentDay = now.getDay()
+      let daysUntilReset = (resetDay - currentDay + 7) % 7
+      
+      // If it's the reset day but before 1 AM, reset is today
+      if (daysUntilReset === 0 && now.getHours() >= 1) {
+        // Already past reset time today, next reset is next week
+        daysUntilReset = 7
+      } else if (daysUntilReset === 0 && now.getHours() < 1) {
+        // Reset is today but hasn't happened yet
+        daysUntilReset = 0
+      }
+      
+      const nextReset = new Date(now)
+      nextReset.setDate(now.getDate() + daysUntilReset)
+      nextReset.setHours(1, 0, 0, 0) // Reset at 1 AM
+      
+      return nextReset
+    }
+  }
+
+  /**
+   * Calculate the week number for a given date.
+   * Week 0 is the first week (launch week).
+   * In debug mode, uses virtual weeks based on secondsPerDay.
+   */
+  private calculateWeekNumber(settings: GameSettings, date: Date): number {
+    const launchDate = new Date(settings.launchDate)
+    launchDate.setUTCHours(0, 0, 0, 0)
+    
+    if (settings.secondsPerDay && settings.secondsPerDay > 0) {
+      // Debug mode: Use virtual weeks
+      const dayMs = this.getDayDurationMs(settings)
+      const launchMs = launchDate.getTime()
+      const daysSinceLaunch = Math.floor((date.getTime() - launchMs) / dayMs)
+      return Math.floor(daysSinceLaunch / 7)
+    } else {
+      // Production mode: Use real calendar weeks
+      const resetDay = settings.weeklyResetDay ?? 0 // 0 = Sunday, 1 = Monday, etc.
+      
+      // Find the start of the week for this date (based on resetDay)
+      const dateDay = date.getDay()
+      let daysToSubtract = (dateDay - resetDay + 7) % 7
+      if (daysToSubtract === 0 && date.getHours() < 1) {
+        // If it's the reset day but before 1 AM, go back to previous week
+        daysToSubtract = 7
+      }
+      
+      const weekStart = new Date(date)
+      weekStart.setDate(date.getDate() - daysToSubtract)
+      weekStart.setUTCHours(0, 0, 0, 0)
+      
+      // Calculate week number: weeks since launch week
+      const weekMs = 7 * 24 * 60 * 60 * 1000 // 7 days in milliseconds
+      const weeksSinceLaunch = Math.floor((weekStart.getTime() - launchDate.getTime()) / weekMs)
+      
+      return Math.max(0, weeksSinceLaunch)
+    }
+  }
+
+  /**
+   * Load or bootstrap the single GameSettings row.
+   * This lets you tweak launchDate and multipliers without code changes.
+   * Settings are cached for 60 seconds to allow quick testing of changes.
+   */
+  async getSettings(): Promise<GameSettings> {
+    const cacheKey = 'game:settings'
+    
+    try {
+      const cacheStart = Date.now()
+      const cached = await this.cacheManager.get<GameSettings>(cacheKey)
+      const cacheDuration = (Date.now() - cacheStart) / 1000
+      
+      this.metricsService.cacheOperations.observe(
+        { operation: 'get', cache_key_pattern: 'game:settings' },
+        cacheDuration,
+      )
+      
+      console.log(`[Cache] Checking cache for ${cacheKey}:`, cached ? 'HIT' : 'MISS')
+      
+      // Check if cached settings are still valid by comparing updatedAt
+      if (cached) {
+        this.metricsService.cacheHits.inc({ cache_key_pattern: 'game:settings' })
+        const dbSettings = await this.prisma.gameSettings.findUnique({ 
+          where: { id: 1 },
+          select: { updatedAt: true }
+        })
+        // If settings were updated in DB, invalidate cache
+        if (dbSettings && dbSettings.updatedAt > cached.updatedAt) {
+          console.log(`[Cache] Invalidating cache - DB settings newer`)
+          await this.cacheManager.del(cacheKey)
+        } else {
+          console.log(`[Cache] Returning cached settings`)
+          return cached
+        }
+      } else {
+        this.metricsService.cacheMisses.inc({ cache_key_pattern: 'game:settings' })
+      }
+    } catch (error) {
+      console.error(`[Cache] Error accessing cache:`, error)
+      this.metricsService.redisErrors.inc({ error_type: 'cache_read_error' })
+      // Continue to load from DB if cache fails
+    }
+
+    let settings = await this.prisma.gameSettings.findUnique({ where: { id: 1 } })
+    if (!settings) {
+      // Bootstrap default settings if none exist yet
+      // Use GAME_LAUNCH_DATE from env if provided, otherwise use current date
+      const launchDateEnv = this.configService.get<string>('GAME_LAUNCH_DATE')
+      let launchDate: Date
+      if (launchDateEnv) {
+        launchDate = new Date(launchDateEnv)
+        launchDate.setUTCHours(0, 0, 0, 0)
+      } else {
+        launchDate = new Date()
+        launchDate.setUTCHours(0, 0, 0, 0)
+      }
+      
+      // Use upsert to handle race conditions and ensure defaults are set
+      settings = await this.prisma.gameSettings.upsert({
+        where: { id: 1 },
+        update: {
+          // If it exists but was missing fields, update with defaults
+          weeklyResetEnabled: false,
+          weeklyResetDay: 0,
+          currentWeekNumber: null,
+        },
+        create: {
+          id: 1,
+          launchDate,
+          gameState: 'ACTIVE',
+          streakBaseMultiplier: 1.0,
+          streakIncrementPerDay: 0.1,
+          weeklyResetEnabled: false,
+          weeklyResetDay: 0, // Sunday
+          currentWeekNumber: null,
+        },
+      })
+      console.log(`✅ GameSettings initialized with launchDate: ${launchDate.toISOString()}`)
+    } else {
+      // Ensure new fields have defaults if they're null (for existing rows before migration)
+      const needsUpdate = 
+        settings.weeklyResetEnabled === undefined || 
+        settings.weeklyResetDay === undefined ||
+        settings.currentWeekNumber === undefined ||
+        settings.gameState === undefined
+      
+      if (needsUpdate) {
+        settings = await this.prisma.gameSettings.update({
+          where: { id: 1 },
+          data: {
+            weeklyResetEnabled: settings.weeklyResetEnabled ?? false,
+            weeklyResetDay: settings.weeklyResetDay ?? 0,
+            currentWeekNumber: settings.currentWeekNumber ?? null,
+            gameState: settings.gameState ?? 'ACTIVE',
+          },
+        })
+        console.log(`✅ GameSettings updated with defaults`)
+      }
+    }
+
+    // Cache for 60 seconds (cache-manager expects TTL in milliseconds)
+    try {
+      const ttlMs = 60 * 1000 // 60 seconds in milliseconds
+      console.log(`[Cache] Attempting to store in cache: ${cacheKey}, TTL: ${ttlMs}ms (60s)`)
+      
+      // Store in cache - cache-manager will pass TTL in milliseconds to the store
+      const cacheSetStart = Date.now()
+      await this.cacheManager.set(cacheKey, settings, ttlMs)
+      const cacheSetDuration = (Date.now() - cacheSetStart) / 1000
+      this.metricsService.cacheOperations.observe(
+        { operation: 'set', cache_key_pattern: 'game:settings' },
+        cacheSetDuration,
+      )
+      console.log(`[Cache] ✅ Stored settings in cache with key: ${cacheKey}`)
+      
+      // Directly check Redis to verify it's actually there
+      try {
+        const store = (this.cacheManager as Cache & { store?: Store }).store
+        if (store && 'get' in store && typeof store.get === 'function') {
+          const directRedisValue = await store.get(cacheKey)
+          if (directRedisValue) {
+            console.log(`[Cache] ✅ Direct Redis check passed - key exists in Redis`)
+          } else {
+            console.error(`[Cache] ❌ Direct Redis check FAILED - key not found in Redis!`)
+          }
+        }
+      } catch (redisCheckError) {
+        console.error(`[Cache] ❌ Error checking Redis directly:`, redisCheckError)
+      }
+      
+      // Verify via cache manager
+      const verifyCache = await this.cacheManager.get<GameSettings>(cacheKey)
+      if (verifyCache && verifyCache.id === settings.id) {
+        console.log(`[Cache] ✅ Verified cache write via cache manager - key exists`)
+      } else {
+        console.error(`[Cache] ❌ WARNING: Cache write verification failed! This might be using in-memory cache.`)
+      }
+    } catch (error) {
+      console.error(`[Cache] ❌ CRITICAL: Error storing in cache:`, error)
+      console.error(`[Cache] ❌ Error details:`, error)
+      console.error(`[Cache] ❌ This is a critical error - cache must work for Kubernetes multi-pod deployments`)
+      // Don't continue silently - throw error to prevent deployment with broken cache
+      throw new Error(`Cache write failed: ${error.message}. Cannot proceed without Redis cache.`)
+    }
+    
+    return settings
+  }
+
+  /**
+   * Get game state information for frontend
+   */
+  async getGameState(): Promise<{ gameState: string; launchDate: string; isLaunched: boolean }> {
+    const settings = await this.getSettings()
+    const now = new Date()
+    const isLaunched = now >= settings.launchDate
+
+    return {
+      gameState: settings.gameState,
+      launchDate: settings.launchDate.toISOString(),
+      isLaunched,
+    }
+  }
+
+  /**
+   * Clear the settings cache (useful for testing/debugging)
+   */
+  async clearSettingsCache(): Promise<void> {
+    await this.cacheManager.del('game:settings')
+  }
+
+  /**
+   * Initialize GameSettings on module startup.
+   * This ensures settings exist before any game operations.
+   */
+  async onModuleInit() {
+    try {
+      await this.getSettings()
+      console.log('✅ GameSettings initialized')
+      // Update active players metric on startup
+      await this.updateActivePlayersMetric()
+    } catch (error) {
+      console.error('❌ Failed to initialize GameSettings:', error)
+      // Don't throw - let the app start, but log the error
+    }
+  }
+
+  /**
+   * Update the active players metric (players who played in last 24 hours)
+   * Runs every 5 minutes to keep the metric current
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async updateActivePlayersMetric() {
+    try {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+      
+      // Count distinct players who have played in the last 24 hours
+      // Use createdAt (actual session creation time) instead of playDate (which is set to start of day)
+      const activePlayerCount = await this.prisma.gameSession.groupBy({
+        by: ['playerId'],
+        where: {
+          createdAt: {
+            gte: twentyFourHoursAgo,
+          },
+        },
+        _count: {
+          playerId: true,
+        },
+      })
+
+      const count = activePlayerCount.length
+      this.metricsService.activePlayers.set(count)
+      console.log(`[Metrics] Updated active players: ${count}`)
+    } catch (error) {
+      console.error('[Metrics] Error updating active players metric:', error)
+      // Don't throw - metric update failure shouldn't break the app
+    }
+  }
+}

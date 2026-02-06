@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Player {
+  id                  Int            @id @default(autoincrement())
+  walletAddress       String         @unique @db.VarChar(42)
+  launchDate          DateTime?
+  totalScore          Int            @default(0)
+  currentStreak       Int            @default(0)
+  longestStreak      Int            @default(0)
+  lastPlayDate        DateTime?
+  // Weekly reset fields
+  lifetimeTotalScore  Int            @default(0)
+  weeklyScore         Int            @default(0)
+  weeklyStreak        Int            @default(0)
+  weeklyLongestStreak Int            @default(0)
+  lastResetWeekNumber Int?          // Week number when player was last reset
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  sessions GameSession[]
+  streaks  PlayerStreak[]
+}
+
+model GameSession {
+  id              Int       @id @default(autoincrement())
+  playerId        Int
+  score           Int
+  playDate        DateTime
+  weekNumber      Int?      // Week number when game was played (for weekly resets and historical queries)
+  streakMultiplier Int      @default(1)
+  finalScore      Int
+  gameData        String?   @db.Text
+  createdAt       DateTime  @default(now())
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@index([playerId])
+  @@index([playDate])
+  @@index([weekNumber])
+}
+
+model PlayerStreak {
+  id          Int       @id @default(autoincrement())
+  playerId    Int
+  streakDate  DateTime
+  streakCount Int
+  createdAt   DateTime  @default(now())
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@index([playerId])
+  @@index([streakDate])
+}
+
+enum GameState {
+  ACTIVE
+  IN_MAINTENANCE
+  DISABLED
+}
+
+model GameSettings {
+  id                   Int       @id
+  launchDate           DateTime
+  gameState            GameState @default(ACTIVE)
+  streakBaseMultiplier Float     @default(1.0)
+  streakIncrementPerDay Float    @default(0.1)
+  secondsPerDay        Int?
+  // Weekly reset settings
+  weeklyResetEnabled   Boolean   @default(false)
+  weeklyResetDay       Int       @default(0) // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  currentWeekNumber    Int?      // Current week number (updated when week changes)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
