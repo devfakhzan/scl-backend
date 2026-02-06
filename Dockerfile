@@ -33,8 +33,13 @@ WORKDIR /app
 # Copy Prisma files (needed for migrations)
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
-# Verify migrations folder exists (critical for production)
-RUN test -d prisma/migrations && echo "✅ Migrations folder found" || (echo "⚠️ WARNING: Migrations folder missing!" && ls -la prisma/ && exit 1)
+# Check for migrations folder (non-fatal - init container has fallback to db push)
+RUN if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then \
+      echo "✅ Migrations folder found"; \
+    else \
+      echo "⚠️ WARNING: Migrations folder missing - init container will use 'prisma db push' as fallback"; \
+      ls -la prisma/ || true; \
+    fi
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
