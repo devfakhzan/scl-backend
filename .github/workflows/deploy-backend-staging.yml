@@ -52,7 +52,8 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           # Update deployment with new image
-          kubectl set image deployment/scl-backend scl-backend=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -n ${{ env.NAMESPACE }} || \
+          # Container name is 'backend', not 'scl-backend'
+          kubectl set image deployment/scl-backend backend=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -n ${{ env.NAMESPACE }} || \
           echo "Deployment not found. Please ensure infrastructure repo has deployed the base deployment first."
           
           # Also update init container if it exists
