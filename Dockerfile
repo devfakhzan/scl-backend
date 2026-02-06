@@ -1,6 +1,9 @@
 # Build stage
 FROM node:20-alpine AS builder
 
+# Enable Corepack to use Yarn version from package.json
+RUN corepack enable
+
 WORKDIR /app
 
 COPY package.json yarn.lock ./
