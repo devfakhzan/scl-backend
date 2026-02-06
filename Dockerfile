@@ -14,7 +14,10 @@ COPY . .
 # Copy Prisma config if it exists (Prisma 7 requirement)
 COPY prisma.config.ts* ./
 # Generate Prisma Client and build
-RUN yarn prisma:generate && yarn build
+# Note: yarn build already includes prisma generate, but we run it separately for clarity
+RUN yarn prisma:generate && yarn build || (echo "Build failed!" && exit 1)
+# Verify build output exists
+RUN test -d dist && test -f dist/main.js || (echo "ERROR: dist/main.js not found!" && ls -la dist/ 2>&1 && exit 1)
 
 # Production stage
 FROM node:20-alpine
