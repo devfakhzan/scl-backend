@@ -34,4 +34,5 @@ COPY --from=builder /app/.yarnrc.yml ./
 
 EXPOSE 3333
 
+# Backend service entrypoint
 CMD ["node", "dist/main"]
