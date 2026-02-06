@@ -15,9 +15,11 @@ COPY . .
 COPY prisma.config.ts* ./
 # Generate Prisma Client and build
 # Note: yarn build already includes prisma generate, but we run it separately for clarity
-RUN yarn prisma:generate && yarn build || (echo "Build failed!" && exit 1)
+RUN yarn prisma:generate
+# Build NestJS application - use npx nest build directly since yarn build script isn't working
+RUN npx nest build || (echo "NestJS build failed!" && exit 1)
 # Verify build output exists
-RUN test -d dist && test -f dist/main.js || (echo "ERROR: dist/main.js not found!" && ls -la dist/ 2>&1 && exit 1)
+RUN test -d dist && test -f dist/main.js || (echo "ERROR: dist/main.js not found!" && echo "Contents of /app:" && ls -la /app/ | head -20 && echo "Contents of dist (if exists):" && ls -la dist/ 2>&1 || echo "dist/ does not exist" && exit 1)
 
 # Production stage
 FROM node:20-alpine
