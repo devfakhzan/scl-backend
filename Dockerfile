@@ -11,6 +11,8 @@ COPY .yarnrc.yml package.json yarn.lock ./
 RUN yarn install --frozen-lockfile
 
 COPY . .
+# Copy Prisma config if it exists (Prisma 7 requirement)
+COPY prisma.config.ts* ./
 # Generate Prisma Client and build
 RUN yarn prisma:generate && yarn build
 
@@ -24,6 +26,7 @@ WORKDIR /app
 
 # Copy Prisma files (needed for migrations)
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
