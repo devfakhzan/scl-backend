@@ -17,9 +17,10 @@ COPY prisma.config.ts* ./
 # Note: yarn build already includes prisma generate, but we run it separately for clarity
 RUN yarn prisma:generate
 # Build NestJS application - use npx nest build directly since yarn build script isn't working
-RUN npx nest build || (echo "NestJS build failed!" && exit 1)
-# Verify build output exists
-RUN test -d dist && test -f dist/main.js || (echo "ERROR: dist/main.js not found!" && echo "Contents of /app:" && ls -la /app/ | head -20 && echo "Contents of dist (if exists):" && ls -la dist/ 2>&1 || echo "dist/ does not exist" && exit 1)
+# Run with verbose output to see what's happening
+RUN npx nest build 2>&1 | tee /tmp/build.log || (echo "NestJS build failed! Build log:" && cat /tmp/build.log && exit 1)
+# Verify build output exists (NestJS outputs to dist/src/main.js, not dist/main.js)
+RUN test -f dist/src/main.js || (echo "ERROR: dist/src/main.js not found!" && echo "Contents of dist:" && find dist -name "*.js" -type f | head -10 && exit 1)
 
 # Production stage
 FROM node:20-alpine
@@ -39,5 +40,5 @@ COPY --from=builder /app/.yarnrc.yml ./
 
 EXPOSE 3333
 
-# Backend service entrypoint
-CMD ["node", "dist/main"]
+# Backend service entrypoint (NestJS outputs to dist/src/main.js)
+CMD ["node", "dist/src/main"]
