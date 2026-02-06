@@ -17,11 +17,17 @@ RUN yarn prisma:generate && yarn build
 # Production stage
 FROM node:20-alpine
 
+# Enable Corepack for Yarn 4.11.0 (needed for Prisma commands)
+RUN corepack enable
+
 WORKDIR /app
 
+# Copy Prisma files (needed for migrations)
+COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/.yarnrc.yml ./
 
 EXPOSE 3333
 
