@@ -5,6 +5,7 @@ on:
     branches: [staging]
     paths:
       - '**'  # Trigger on any change in backend repo
+  workflow_dispatch:  # Allow manual triggering
 
 env:
   AWS_REGION: ap-southeast-1
