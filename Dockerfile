@@ -6,7 +6,8 @@ RUN corepack enable
 
 WORKDIR /app
 
-COPY package.json yarn.lock ./
+# Copy Yarn config first (needed for node_modules linker)
+COPY .yarnrc.yml package.json yarn.lock ./
 RUN yarn install --frozen-lockfile
 
 COPY . .
