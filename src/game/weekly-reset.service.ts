@@ -69,10 +69,12 @@ export class WeeklyResetService implements OnModuleInit {
       const resetDay = settings.weeklyResetDay ?? 0 // 0 = Sunday, 1 = Monday, etc.
       
       // Find the start of the current week (based on resetDay)
-      const currentDay = now.getDay()
+      // Use UTC methods to avoid timezone issues
+      const currentDay = now.getUTCDay()
+      const currentHour = now.getUTCHours()
       let daysToSubtract = (currentDay - resetDay + 7) % 7
-      if (daysToSubtract === 0 && now.getHours() < 1) {
-        // If it's the reset day but before 1 AM, go back to previous week
+      if (daysToSubtract === 0 && currentHour < 1) {
+        // If it's the reset day but before 1 AM UTC, go back to previous week
         daysToSubtract = 7
       }
       
@@ -132,6 +134,25 @@ export class WeeklyResetService implements OnModuleInit {
     }
 
     this.logger.log(`Performing weekly reset for ${players.length} players...`)
+
+    // Create snapshots before resetting
+    const snapshots = players.map(player => ({
+      weekNumber: currentWeekNumber,
+      playerId: player.id,
+      walletAddress: player.walletAddress,
+      weeklyScore: player.weeklyScore ?? 0,
+      weeklyStreak: player.weeklyStreak ?? 0,
+      weeklyLongestStreak: player.weeklyLongestStreak ?? 0,
+      lifetimeTotalScore: (player.lifetimeTotalScore ?? 0) + (player.weeklyScore ?? 0),
+    }))
+
+    // Save snapshots in batch
+    if (snapshots.length > 0) {
+      await this.prisma.weeklyScoreSnapshot.createMany({
+        data: snapshots,
+      })
+      this.logger.log(`Created ${snapshots.length} weekly score snapshots for week ${currentWeekNumber}`)
+    }
 
     // Reset all players in a single transaction
     for (const player of players) {

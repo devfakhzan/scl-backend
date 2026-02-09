@@ -58,6 +58,23 @@ model PlayerStreak {
   @@index([streakDate])
 }
 
+model WeeklyScoreSnapshot {
+  id                  Int       @id @default(autoincrement())
+  weekNumber          Int       // Week number when snapshot was taken
+  playerId            Int
+  walletAddress       String    @db.VarChar(42)
+  weeklyScore         Int       // Weekly score before reset
+  weeklyStreak        Int       // Weekly streak before reset
+  weeklyLongestStreak Int       // Weekly longest streak before reset
+  lifetimeTotalScore  Int       // Lifetime total score at time of snapshot
+  snapshotDate        DateTime  @default(now()) // When the snapshot was taken
+
+  @@index([weekNumber])
+  @@index([playerId])
+  @@index([walletAddress])
+  @@index([snapshotDate])
+}
+
 enum GameState {
   ACTIVE
   IN_MAINTENANCE

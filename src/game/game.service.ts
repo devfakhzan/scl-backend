@@ -702,21 +702,23 @@ export class GameService implements OnModuleInit {
       return new Date(nextWeekStart)
     } else {
       // Production mode: Use real calendar weeks
-      const currentDay = now.getDay()
+      // Use UTC methods to avoid timezone issues
+      const currentDay = now.getUTCDay()
+      const currentHour = now.getUTCHours()
       let daysUntilReset = (resetDay - currentDay + 7) % 7
       
-      // If it's the reset day but before 1 AM, reset is today
-      if (daysUntilReset === 0 && now.getHours() >= 1) {
+      // If it's the reset day but before 1 AM UTC, reset is today
+      if (daysUntilReset === 0 && currentHour >= 1) {
         // Already past reset time today, next reset is next week
         daysUntilReset = 7
-      } else if (daysUntilReset === 0 && now.getHours() < 1) {
+      } else if (daysUntilReset === 0 && currentHour < 1) {
         // Reset is today but hasn't happened yet
         daysUntilReset = 0
       }
       
       const nextReset = new Date(now)
-      nextReset.setDate(now.getDate() + daysUntilReset)
-      nextReset.setHours(1, 0, 0, 0) // Reset at 1 AM
+      nextReset.setUTCDate(now.getUTCDate() + daysUntilReset)
+      nextReset.setUTCHours(1, 0, 0, 0) // Reset at 1 AM UTC
       
       return nextReset
     }
@@ -742,10 +744,12 @@ export class GameService implements OnModuleInit {
       const resetDay = settings.weeklyResetDay ?? 0 // 0 = Sunday, 1 = Monday, etc.
       
       // Find the start of the week for this date (based on resetDay)
-      const dateDay = date.getDay()
+      // Use UTC methods to avoid timezone issues
+      const dateDay = date.getUTCDay()
+      const dateHour = date.getUTCHours()
       let daysToSubtract = (dateDay - resetDay + 7) % 7
-      if (daysToSubtract === 0 && date.getHours() < 1) {
-        // If it's the reset day but before 1 AM, go back to previous week
+      if (daysToSubtract === 0 && dateHour < 1) {
+        // If it's the reset day but before 1 AM UTC, go back to previous week
         daysToSubtract = 7
       }
       
