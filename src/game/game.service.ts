@@ -743,6 +743,13 @@ export class GameService implements OnModuleInit {
       // Production mode: Use real calendar weeks
       const resetDay = settings.weeklyResetDay ?? 0 // 0 = Sunday, 1 = Monday, etc.
       
+      // Normalize launch date to the start of its week (based on resetDay)
+      const launchDay = launchDate.getUTCDay()
+      let launchDaysToSubtract = (launchDay - resetDay + 7) % 7
+      const launchWeekStart = new Date(launchDate)
+      launchWeekStart.setUTCDate(launchDate.getUTCDate() - launchDaysToSubtract)
+      launchWeekStart.setUTCHours(0, 0, 0, 0)
+      
       // Find the start of the week for this date (based on resetDay)
       // Use UTC methods to avoid timezone issues
       const dateDay = date.getUTCDay()
@@ -754,12 +761,12 @@ export class GameService implements OnModuleInit {
       }
       
       const weekStart = new Date(date)
-      weekStart.setDate(date.getDate() - daysToSubtract)
+      weekStart.setUTCDate(date.getUTCDate() - daysToSubtract)
       weekStart.setUTCHours(0, 0, 0, 0)
       
-      // Calculate week number: weeks since launch week
+      // Calculate week number: weeks since launch week start
       const weekMs = 7 * 24 * 60 * 60 * 1000 // 7 days in milliseconds
-      const weeksSinceLaunch = Math.floor((weekStart.getTime() - launchDate.getTime()) / weekMs)
+      const weeksSinceLaunch = Math.floor((weekStart.getTime() - launchWeekStart.getTime()) / weekMs)
       
       return Math.max(0, weeksSinceLaunch)
     }
