@@ -33,7 +33,7 @@ model GameSession {
   score           Int
   playDate        DateTime
   weekNumber      Int?      // Week number when game was played (for weekly resets and historical queries)
-  streakMultiplier Int      @default(1)
+  streakMultiplier Float     @default(1.0)
   finalScore      Int
   gameData        String?   @db.Text
   createdAt       DateTime  @default(now())
