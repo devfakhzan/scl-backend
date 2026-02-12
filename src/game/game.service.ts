@@ -161,18 +161,56 @@ export class GameService implements OnModuleInit {
     // Use weekly scores if weekly reset is enabled, otherwise use lifetime scores
     const useWeeklyScores = settings.weeklyResetEnabled ?? false
     const displayScore = useWeeklyScores ? (player.weeklyScore ?? 0) : player.totalScore
-    const displayStreak = useWeeklyScores ? (player.weeklyStreak ?? 0) : player.currentStreak
+    const storedStreak = useWeeklyScores ? (player.weeklyStreak ?? 0) : player.currentStreak
     const displayLongestStreak = useWeeklyScores ? (player.weeklyLongestStreak ?? 0) : player.longestStreak
+
+    // Calculate what the streak and multiplier WOULD BE if they play right now
+    // This ensures the UI shows the correct values they would get if they play now
+    // The multiplier is based on the streak they HAD (before playing), not what it will be after
+    let projectedStreakForMultiplier = storedStreak // For multiplier calculation
+    let projectedStreakForDisplay = storedStreak // For display (what streak they'll have after playing)
+    
+    // Check if they've already played today - if so, use current streak
+    // Otherwise, calculate what streak they would get if they play now
+    const lastPlay = player.lastPlayDate ? new Date(player.lastPlayDate) : null
+    const normalizedLastPlay = lastPlay ? this.normalizeToVirtualDay(lastPlay, settings) : null
+    const normalizedToday = this.normalizeToVirtualDay(today, settings)
+    
+    // Check if this would be their first play today
+    const wouldBeFirstPlayToday = !normalizedLastPlay || normalizedLastPlay.getTime() < normalizedToday.getTime()
+    
+    if (wouldBeFirstPlayToday) {
+      if (!normalizedLastPlay) {
+        // First ever play - streak would be 1, multiplier is base (1.0x)
+        projectedStreakForMultiplier = 0 // Results in base multiplier
+        projectedStreakForDisplay = 1
+      } else if (normalizedLastPlay.getTime() === normalizedYesterday.getTime()) {
+        // Consecutive day - streak continues
+        // Multiplier is based on streak BEFORE incrementing (what they had)
+        projectedStreakForMultiplier = storedStreak
+        // Display shows what streak they'll have after (stored + 1)
+        projectedStreakForDisplay = storedStreak + 1
+      } else {
+        // Gap in days - streak resets
+        // Multiplier should be base (1.0x) since streak is broken
+        projectedStreakForMultiplier = 0 // Results in base multiplier
+        projectedStreakForDisplay = 1
+      }
+    } else {
+      // Already played today, keep current streak
+      projectedStreakForMultiplier = storedStreak
+      projectedStreakForDisplay = storedStreak
+    }
 
     const result: GetPlayerStatusDto = {
       walletAddress: player.walletAddress,
       totalScore: displayScore,
       lifetimeTotalScore: player.lifetimeTotalScore ?? player.totalScore, // Always include lifetime for reference
-      currentStreak: displayStreak,
+      currentStreak: projectedStreakForDisplay, // Show streak they would have after playing
       longestStreak: displayLongestStreak,
       playsRemaining,
       canPlay: playsRemaining > 0,
-      streakMultiplier: this.calculateStreakMultiplier(settings, displayStreak),
+      streakMultiplier: this.calculateStreakMultiplier(settings, projectedStreakForMultiplier),
       hasValidStreak,
       nextAvailableAt,
       secondsToNextPlay,
@@ -267,23 +305,32 @@ export class GameService implements OnModuleInit {
     // The multiplier should be based on the streak the player had when they played
     const currentStreak = isWeeklyResetEnabled ? (player.weeklyStreak ?? 0) : player.currentStreak
     
+    // Determine what streak to use for multiplier calculation
+    // If there's a gap, multiplier should be base (1.0x), not based on old stored streak
+    let streakForMultiplier = currentStreak
+    
     // Update streak (both lifetime and weekly if enabled)
     let newStreak = currentStreak
     let newLifetimeStreak = player.currentStreak
     
     if (isFirstPlayToday) {
       if (!normalizedLastPlay) {
-        // First ever play
+        // First ever play - multiplier is base (1.0x)
         newStreak = 1
         newLifetimeStreak = 1
+        streakForMultiplier = 0 // Results in base multiplier
       } else if (normalizedLastPlay.getTime() === normalizedYesterday.getTime()) {
         // Consecutive day → streak continues
+        // Multiplier is based on streak BEFORE incrementing (what they had)
+        streakForMultiplier = currentStreak
         newStreak = currentStreak + 1
         newLifetimeStreak = player.currentStreak + 1
       } else {
         // Gap in days → streak resets
+        // Multiplier should be base (1.0x) since streak is broken
         newStreak = 1
         newLifetimeStreak = 1
+        streakForMultiplier = 0 // Results in base multiplier
       }
 
       // Update lifetime streak
@@ -326,9 +373,9 @@ export class GameService implements OnModuleInit {
     }
 
     // Calculate final score with streak multiplier
-    // IMPORTANT: Use currentStreak (before incrementing) for multiplier calculation
+    // IMPORTANT: Use streakForMultiplier which accounts for gaps (resets to base multiplier if gap)
     // The multiplier should reflect what the player had when they played, not after
-    const streakMultiplier = this.calculateStreakMultiplier(settings, currentStreak)
+    const streakMultiplier = this.calculateStreakMultiplier(settings, streakForMultiplier)
     const finalScore = Math.floor(dto.score * streakMultiplier)
 
     // Track metrics
