@@ -174,7 +174,7 @@ export class GameService implements OnModuleInit {
     // Otherwise, calculate what streak they would get if they play now
     const lastPlay = player.lastPlayDate ? new Date(player.lastPlayDate) : null
     const normalizedLastPlay = lastPlay ? this.normalizeToVirtualDay(lastPlay, settings) : null
-    const normalizedToday = this.normalizeToVirtualDay(today, settings)
+    // normalizedToday is already declared above (line 130), reuse it
     
     // Check if this would be their first play today
     const wouldBeFirstPlayToday = !normalizedLastPlay || normalizedLastPlay.getTime() < normalizedToday.getTime()
