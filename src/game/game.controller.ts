@@ -1,11 +1,15 @@
 import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common'
 import { GameService } from './game.service'
+import { ReferralService } from './referral.service'
 import { SubmitScoreDto } from './dto/submit-score.dto'
 import { GameStateGuard } from './guards/game-state.guard'
 
 @Controller('api/game')
 export class GameController {
-  constructor(private readonly gameService: GameService) {}
+  constructor(
+    private readonly gameService: GameService,
+    private readonly referralService: ReferralService,
+  ) {}
 
   @Get('state')
   async getGameState() {
@@ -51,5 +55,24 @@ export class GameController {
       settingsId: settings.id,
       timestamp: new Date().toISOString()
     }
+  }
+
+  @Post('referral/apply')
+  async applyReferralCode(
+    @Body() body: { walletAddress: string; code: string },
+  ) {
+    return this.referralService.applyReferralCode(body.walletAddress, body.code)
+  }
+
+  @Get('referral/:walletAddress')
+  async getReferralInfo(@Param('walletAddress') walletAddress: string) {
+    return this.referralService.getReferralInfo(walletAddress)
+  }
+
+  @Get('debug/:walletAddress')
+  async getDebugInfo(@Param('walletAddress') walletAddress: string) {
+    const status = await this.gameService.getPlayerStatus(walletAddress)
+    const referral = await this.referralService.getReferralInfo(walletAddress)
+    return { status, referral }
   }
 }

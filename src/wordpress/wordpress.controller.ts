@@ -16,4 +16,12 @@ export class WordpressController {
   async getPost(@Param('slug') slug: string): Promise<WordPressPost | null> {
     return this.wordpressService.getPost(slug)
   }
+
+  @Get('game-ref-code')
+  async getGameRefCode(@Query('code') code: string): Promise<WordPressPost | null> {
+    if (!code || code.trim() === '') {
+      throw new Error('Code parameter is required')
+    }
+    return this.wordpressService.getGameRefCodeByCode(code.trim())
+  }
 }

@@ -99,10 +99,11 @@ export class GameService implements OnModuleInit {
     const launchDate = new Date(settings.launchDate)
     launchDate.setUTCHours(0, 0, 0, 0)
     // Total lifetime plays allowed: 1 per day since launch (inclusive)
-    const totalPlaysAllowed = Math.max(1, daysSinceLaunch + 1)
+    const basePlaysAllowed = Math.max(1, daysSinceLaunch + 1)
 
     // Count all plays since launch (lifetime usage of tries)
     // Use virtual day boundary for comparison
+    // IMPORTANT: Count plays FIRST, then get referral data to avoid race conditions
     const normalizedLaunchDate = this.normalizeToVirtualDay(launchDate, settings)
     const totalPlaysUsed = await this.prisma.gameSession.count({
       where: {
@@ -113,7 +114,71 @@ export class GameService implements OnModuleInit {
       },
     })
 
-    const playsRemaining = Math.max(0, totalPlaysAllowed - totalPlaysUsed)
+    // Check for referral code extra plays
+    // Get referral data AFTER counting plays to ensure we have the latest data
+    // IMPORTANT: Read referral data with a fresh query to avoid stale data from transactions
+    const referral = await this.prisma.referralCode.findUnique({
+      where: { walletAddress: player.walletAddress.toLowerCase() },
+    })
+    
+    // CRITICAL: Ensure referralPlaysUsed doesn't exceed totalPlaysUsed
+    // This prevents negative basePlaysUsed and incorrect calculations
+    // If referralPlaysUsed > totalPlaysUsed, it means there's a data inconsistency
+    // (e.g., referral was updated but session wasn't created, or vice versa)
+    const referralPlaysUsed = referral ? referral.extraPlaysUsed : 0
+    const referralExtraPlaysRemaining = referral
+      ? Math.max(0, referral.extraPlaysTotal - referral.extraPlaysUsed)
+      : 0
+    
+    // Cap referralPlaysUsed at totalPlaysUsed to prevent data inconsistency
+    // This ensures basePlaysUsed is never negative
+    const safeReferralPlaysUsed = Math.min(referralPlaysUsed, totalPlaysUsed)
+    
+    // Log if we had to cap the value (indicates a data inconsistency)
+    if (referral && referralPlaysUsed > totalPlaysUsed) {
+      console.error('[Referral] DATA INCONSISTENCY DETECTED - capping referralPlaysUsed:', {
+        walletAddress: player.walletAddress,
+        totalPlaysUsed,
+        referralPlaysUsed,
+        safeReferralPlaysUsed,
+        referralExtraPlaysTotal: referral.extraPlaysTotal,
+        referralExtraPlaysUsed: referral.extraPlaysUsed,
+      })
+    }
+
+    // Calculate base plays remaining (excluding referral plays)
+    // Base plays are 1 per day since launch
+    // Referral plays used should not count against base plays
+    // Example: If totalPlaysUsed = 100 and referralPlaysUsed = 3, then basePlaysUsed = 97
+    // Use safeReferralPlaysUsed to prevent negative basePlaysUsed
+    const basePlaysUsed = Math.max(0, totalPlaysUsed - safeReferralPlaysUsed)
+    
+    // Base plays remaining = base plays allowed minus base plays used
+    // This cannot go negative
+    const basePlaysRemaining = Math.max(0, basePlaysAllowed - basePlaysUsed)
+    
+    // Total plays remaining = base plays remaining + referral plays remaining
+    const playsRemaining = basePlaysRemaining + referralExtraPlaysRemaining
+    
+    // Debug logging for referral play calculation
+    console.log('[Referral] getPlayerStatus calculation:', {
+      walletAddress: player.walletAddress,
+      totalPlaysUsed,
+      referralPlaysUsed,
+      safeReferralPlaysUsed,
+      basePlaysUsed,
+      basePlaysAllowed,
+      basePlaysRemaining,
+      referralExtraPlaysRemaining,
+      playsRemaining,
+      hasReferral: !!referral,
+      referralData: referral ? {
+        extraPlaysTotal: referral.extraPlaysTotal,
+        extraPlaysUsed: referral.extraPlaysUsed,
+        extraPlaysRemaining: referral.extraPlaysTotal - referral.extraPlaysUsed,
+      } : null,
+      dataInconsistency: referralPlaysUsed > totalPlaysUsed ? 'YES - CAPPED' : 'NO',
+    })
 
     // Compute next available play time if user is out of plays
     let nextAvailableAt: string | null = null
@@ -236,7 +301,10 @@ export class GameService implements OnModuleInit {
         virtualDayStart: today.toISOString(),
         virtualDayEnd: virtualDayEnd.toISOString(),
         nextVirtualDayStart: nextDayStart.toISOString(),
-        totalPlaysAllowed,
+        basePlaysAllowed,
+        basePlaysRemaining,
+        referralExtraPlaysRemaining,
+        totalPlaysRemaining: playsRemaining,
         totalPlaysUsed,
         lastPlayVirtualDay,
         launchDate: (settings.launchDate instanceof Date 
@@ -395,6 +463,12 @@ export class GameService implements OnModuleInit {
     // Calculate week number for this session
     const weekNumber = settings.weeklyResetEnabled ? this.calculateWeekNumber(settings, today) : null
 
+    // Check if this play should use a referral play
+    const referral = await this.prisma.referralCode.findUnique({
+      where: { walletAddress: player.walletAddress.toLowerCase() },
+    })
+    const useReferralPlay = referral && referral.extraPlaysUsed < referral.extraPlaysTotal
+
     // Create game session
     const session = await this.prisma.gameSession.create({
       data: {
@@ -407,6 +481,34 @@ export class GameService implements OnModuleInit {
         gameData: dto.gameData,
       },
     })
+
+    // If this was a referral play, mark it as used
+    // IMPORTANT: Do this AFTER creating the session but BEFORE updating player and invalidating cache
+    // This ensures the session exists when we update the referral, and the update is committed
+    // before any subsequent getPlayerStatus calls
+    if (useReferralPlay) {
+      console.log('[Referral] Marking referral play as used:', {
+        walletAddress: player.walletAddress,
+        before: referral.extraPlaysUsed,
+        after: referral.extraPlaysUsed + 1,
+        total: referral.extraPlaysTotal,
+      })
+      await this.prisma.referralCode.update({
+        where: { walletAddress: player.walletAddress.toLowerCase() },
+        data: {
+          extraPlaysUsed: referral.extraPlaysUsed + 1,
+        },
+      })
+      console.log('[Referral] Referral play marked as used successfully')
+    } else {
+      console.log('[Referral] This was NOT a referral play:', {
+        walletAddress: player.walletAddress,
+        hasReferral: !!referral,
+        extraPlaysUsed: referral?.extraPlaysUsed,
+        extraPlaysTotal: referral?.extraPlaysTotal,
+        canUseReferral: referral && referral.extraPlaysUsed < referral.extraPlaysTotal,
+      })
+    }
 
     // Update player totals
     player.totalScore += finalScore
@@ -714,6 +816,12 @@ export class GameService implements OnModuleInit {
           totalScore: 0,
           currentStreak: 0,
           longestStreak: 0,
+          lifetimeTotalScore: 0,
+          weeklyScore: 0,
+          weeklyStreak: 0,
+          weeklyLongestStreak: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
         },
       })
     }
@@ -901,6 +1009,9 @@ export class GameService implements OnModuleInit {
           weeklyResetEnabled: false,
           weeklyResetDay: 0, // Sunday
           currentWeekNumber: null,
+          referralExtraPlays: 3,
+          createdAt: new Date(),
+          updatedAt: new Date(),
         },
       })
       console.log(`✅ GameSettings initialized with launchDate: ${launchDate.toISOString()}`)
@@ -910,7 +1021,8 @@ export class GameService implements OnModuleInit {
         settings.weeklyResetEnabled === undefined || 
         settings.weeklyResetDay === undefined ||
         settings.currentWeekNumber === undefined ||
-        settings.gameState === undefined
+        settings.gameState === undefined ||
+        settings.referralExtraPlays === undefined
       
       if (needsUpdate) {
         settings = await this.prisma.gameSettings.update({
@@ -920,6 +1032,7 @@ export class GameService implements OnModuleInit {
             weeklyResetDay: settings.weeklyResetDay ?? 0,
             currentWeekNumber: settings.currentWeekNumber ?? null,
             gameState: settings.gameState ?? 'ACTIVE',
+            referralExtraPlays: settings.referralExtraPlays ?? 3,
           },
         })
         console.log(`✅ GameSettings updated with defaults`)

@@ -6,73 +6,97 @@ datasource db {
   provider = "postgresql"
 }
 
+model GameSession {
+  id               Int      @id @default(autoincrement())
+  playerId         Int
+  score            Int
+  playDate         DateTime
+  streakMultiplier Float    @default(1.0)
+  finalScore       Int
+  gameData         String?
+  createdAt        DateTime @default(now())
+  weekNumber       Int?
+  Player           Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@index([playDate])
+  @@index([playerId])
+  @@index([weekNumber])
+}
+
+model GameSettings {
+  id                    Int       @id
+  launchDate            DateTime
+  streakBaseMultiplier  Float     @default(1.0)
+  streakIncrementPerDay Float     @default(0.1)
+  secondsPerDay         Int?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime
+  weeklyResetDay        Int       @default(0)
+  weeklyResetEnabled    Boolean   @default(false)
+  currentWeekNumber     Int?
+  gameState             GameState @default(ACTIVE)
+  referralExtraPlays    Int       @default(3)
+}
+
 model Player {
   id                  Int            @id @default(autoincrement())
   walletAddress       String         @unique @db.VarChar(42)
   launchDate          DateTime?
   totalScore          Int            @default(0)
   currentStreak       Int            @default(0)
-  longestStreak      Int            @default(0)
+  longestStreak       Int            @default(0)
   lastPlayDate        DateTime?
-  // Weekly reset fields
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime
   lifetimeTotalScore  Int            @default(0)
   weeklyScore         Int            @default(0)
   weeklyStreak        Int            @default(0)
   weeklyLongestStreak Int            @default(0)
-  lastResetWeekNumber Int?          // Week number when player was last reset
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
-
-  sessions GameSession[]
-  streaks  PlayerStreak[]
-}
-
-model GameSession {
-  id              Int       @id @default(autoincrement())
-  playerId        Int
-  score           Int
-  playDate        DateTime
-  weekNumber      Int?      // Week number when game was played (for weekly resets and historical queries)
-  streakMultiplier Float     @default(1.0)
-  finalScore      Int
-  gameData        String?   @db.Text
-  createdAt       DateTime  @default(now())
-
-  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
-
-  @@index([playerId])
-  @@index([playDate])
-  @@index([weekNumber])
+  lastResetWeekNumber Int?
+  GameSession         GameSession[]
+  PlayerStreak        PlayerStreak[]
 }
 
 model PlayerStreak {
-  id          Int       @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   playerId    Int
   streakDate  DateTime
   streakCount Int
-  createdAt   DateTime  @default(now())
-
-  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  Player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   @@index([playerId])
   @@index([streakDate])
 }
 
-model WeeklyScoreSnapshot {
-  id                  Int       @id @default(autoincrement())
-  weekNumber          Int       // Week number when snapshot was taken
-  playerId            Int
-  walletAddress       String    @db.VarChar(42)
-  weeklyScore         Int       // Weekly score before reset
-  weeklyStreak        Int       // Weekly streak before reset
-  weeklyLongestStreak Int       // Weekly longest streak before reset
-  lifetimeTotalScore  Int       // Lifetime total score at time of snapshot
-  snapshotDate        DateTime  @default(now()) // When the snapshot was taken
+model ReferralCode {
+  id              Int      @id @default(autoincrement())
+  walletAddress   String   @unique @db.VarChar(42)
+  code            String   @db.VarChar(255)
+  extraPlaysUsed  Int      @default(0)
+  extraPlaysTotal Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
 
-  @@index([weekNumber])
-  @@index([playerId])
+  @@index([code])
   @@index([walletAddress])
+}
+
+model WeeklyScoreSnapshot {
+  id                  Int      @id @default(autoincrement())
+  weekNumber          Int
+  playerId            Int
+  walletAddress       String   @db.VarChar(42)
+  weeklyScore         Int
+  weeklyStreak        Int
+  weeklyLongestStreak Int
+  lifetimeTotalScore  Int
+  snapshotDate        DateTime @default(now())
+
+  @@index([playerId])
   @@index([snapshotDate])
+  @@index([walletAddress])
+  @@index([weekNumber])
 }
 
 enum GameState {
@@ -80,19 +104,3 @@ enum GameState {
   IN_MAINTENANCE
   DISABLED
 }
-
-model GameSettings {
-  id                   Int       @id
-  launchDate           DateTime
-  gameState            GameState @default(ACTIVE)
-  streakBaseMultiplier Float     @default(1.0)
-  streakIncrementPerDay Float    @default(0.1)
-  secondsPerDay        Int?
-  // Weekly reset settings
-  weeklyResetEnabled   Boolean   @default(false)
-  weeklyResetDay       Int       @default(0) // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  currentWeekNumber    Int?      // Current week number (updated when week changes)
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-}
-

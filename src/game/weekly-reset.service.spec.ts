@@ -82,6 +82,7 @@ describe('WeeklyResetService', () => {
   describe('Weekly Reset - Basic Functionality', () => {
     it('should not perform reset when weekly reset is disabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -107,6 +108,7 @@ describe('WeeklyResetService', () => {
 
     it('should perform reset when week number increases', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -226,6 +228,7 @@ describe('WeeklyResetService', () => {
 
     it('should not reset players already reset in current week', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -273,6 +276,7 @@ describe('WeeklyResetService', () => {
 
     it('should preserve lifetime score when resetting weekly score', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -334,6 +338,7 @@ describe('WeeklyResetService', () => {
   describe('Weekly Reset - Virtual Time (secondsPerDay)', () => {
     it('should calculate week number correctly with secondsPerDay = 60', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -378,6 +383,7 @@ describe('WeeklyResetService', () => {
 
     it('should handle reset with secondsPerDay = 3600 (1 hour = 1 day)', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -433,6 +439,7 @@ describe('WeeklyResetService', () => {
   describe('Weekly Reset - Real Calendar Time', () => {
     it('should calculate week number correctly with real calendar weeks', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate: new Date('2025-01-05T00:00:00.000Z'), // Sunday
         gameState: 'ACTIVE',
@@ -475,6 +482,7 @@ describe('WeeklyResetService', () => {
 
     it('should handle different weeklyResetDay values', async () => {
       const baseSettings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate: new Date('2025-01-05T00:00:00.000Z'), // Sunday
         gameState: 'ACTIVE',
@@ -509,6 +517,7 @@ describe('WeeklyResetService', () => {
   describe('Weekly Reset - Edge Cases', () => {
     it('should handle null lastResetWeekNumber for new players', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -568,6 +577,7 @@ describe('WeeklyResetService', () => {
 
     it('should handle players with zero weekly score', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -627,6 +637,7 @@ describe('WeeklyResetService', () => {
 
     it('should handle multiple consecutive resets', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -714,6 +725,7 @@ describe('WeeklyResetService', () => {
 
     it('should handle missed cron runs (catch up on next run)', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -779,6 +791,7 @@ describe('WeeklyResetService', () => {
 
     it('should not reset when week number has not changed', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -809,6 +822,7 @@ describe('WeeklyResetService', () => {
 
     it('should handle null currentWeekNumber in settings (first reset)', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -864,6 +878,7 @@ describe('WeeklyResetService', () => {
   describe('Weekly Reset - Multiple Players', () => {
     it('should reset multiple players in the same operation', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -984,6 +999,7 @@ describe('WeeklyResetService', () => {
 
     it('should only reset players that need reset (skip already reset players)', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -1061,6 +1077,7 @@ describe('WeeklyResetService', () => {
   describe('Weekly Reset - No Players', () => {
     it('should handle case when no players need reset', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',

@@ -72,6 +72,7 @@ describe('GameService - Weekly Reset Integration', () => {
   describe('Score Submission - Weekly Reset Enabled', () => {
     it('should accumulate weekly score when weekly reset is enabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -162,6 +163,7 @@ describe('GameService - Weekly Reset Integration', () => {
 
     it('should accumulate lifetime score when weekly reset is disabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -247,6 +249,7 @@ describe('GameService - Weekly Reset Integration', () => {
 
     it('should store weekNumber in game session when weekly reset is enabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -323,6 +326,7 @@ describe('GameService - Weekly Reset Integration', () => {
 
     it('should not store weekNumber when weekly reset is disabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -400,6 +404,7 @@ describe('GameService - Weekly Reset Integration', () => {
   describe('Streak Calculations - Weekly vs Lifetime', () => {
     it('should track weekly streak separately from lifetime streak when weekly reset enabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -480,6 +485,7 @@ describe('GameService - Weekly Reset Integration', () => {
 
     it('should reset weekly streak but preserve lifetime streak after weekly reset', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -562,6 +568,7 @@ describe('GameService - Weekly Reset Integration', () => {
 
     it('should handle streak gap correctly for weekly and lifetime streaks', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -645,6 +652,7 @@ describe('GameService - Weekly Reset Integration', () => {
   describe('Player Status - Weekly Reset', () => {
     it('should return weekly score when weekly reset is enabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -696,6 +704,7 @@ describe('GameService - Weekly Reset Integration', () => {
 
     it('should return lifetime score when weekly reset is disabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -747,6 +756,7 @@ describe('GameService - Weekly Reset Integration', () => {
 
     it('should include currentWeekNumber in debug info when weekly reset enabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -799,6 +809,7 @@ describe('GameService - Weekly Reset Integration', () => {
   describe('Leaderboard - Weekly Reset', () => {
     it('should use weekly scores when weekly reset is enabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -867,6 +878,7 @@ describe('GameService - Weekly Reset Integration', () => {
 
     it('should use lifetime scores when weekly reset is disabled', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -934,6 +946,7 @@ describe('GameService - Weekly Reset Integration', () => {
 
     it('should calculate nextResetTime correctly with virtual time', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -971,6 +984,7 @@ describe('GameService - Weekly Reset Integration', () => {
   describe('Week Number Calculation', () => {
     it('should calculate week number correctly with secondsPerDay = 60', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -1019,6 +1033,7 @@ describe('GameService - Weekly Reset Integration', () => {
   describe('Edge Cases', () => {
     it('should handle player with null weekly fields', async () => {
       const settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',
@@ -1099,6 +1114,7 @@ describe('GameService - Weekly Reset Integration', () => {
     it('should handle switching from weekly reset disabled to enabled', async () => {
       // First: weekly reset disabled
       let settings: GameSettings = {
+      referralExtraPlays: 3,
         id: 1,
         launchDate,
         gameState: 'ACTIVE',

@@ -141,7 +141,11 @@ async function setupTestPlayers() {
   for (const player of players) {
     await prisma.player.upsert({
       where: { walletAddress: player.walletAddress },
-      create: player,
+      create: {
+        ...player,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
       update: player,
     })
   }

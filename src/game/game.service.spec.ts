@@ -62,6 +62,7 @@ describe('GameService time scaling', () => {
   it('honors a short virtual day (secondsPerDay) when calculating playsRemaining and nextAvailableAt', async () => {
     const launchDate = new Date('2025-01-01T00:00:00.000Z')
     const settings: GameSettings = {
+      referralExtraPlays: 3,
       id: 1,
       launchDate,
       gameState: 'ACTIVE',
