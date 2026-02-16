@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common'
 import { GameService } from '../game.service'
 
-type GameState = 'ACTIVE' | 'IN_MAINTENANCE' | 'DISABLED'
+type GameState = 'ACTIVE' | 'IN_MAINTENANCE' | 'DISABLED' | 'HIDDEN'
 
 interface SettingsWithGameState {
   gameState: GameState

@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common'
-import { WordpressService, WordPressPost } from './wordpress.service'
+import { WordpressService, WordPressPost, SiteSettings } from './wordpress.service'
 
 @Controller('api/wordpress')
 export class WordpressController {
@@ -23,5 +23,10 @@ export class WordpressController {
       throw new Error('Code parameter is required')
     }
     return this.wordpressService.getGameRefCodeByCode(code.trim())
+  }
+
+  @Get('site-settings')
+  async getSiteSettings(): Promise<SiteSettings | null> {
+    return this.wordpressService.getSiteSettings()
   }
 }

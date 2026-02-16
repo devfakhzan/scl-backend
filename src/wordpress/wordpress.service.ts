@@ -17,6 +17,11 @@ export interface WordPressPost {
   author: string
 }
 
+export interface SiteSettings {
+  isLive: boolean
+  kickUsername: string | null
+}
+
 @Injectable()
 export class WordpressService {
   private readonly wpClient: AxiosInstance
@@ -195,6 +200,186 @@ export class WordpressService {
     } catch (error) {
       console.error('WordPress API error (game_ref_code):', error)
       return null
+    }
+  }
+
+  async getSiteSettings(): Promise<SiteSettings | null> {
+    const cacheKey = 'wp:site_settings'
+    const cached = await this.cacheManager.get<SiteSettings>(cacheKey)
+    if (cached) {
+      return cached
+    }
+
+    try {
+      // Get the scl_site_settings post type (should only be 1 post)
+      const settingsResponse = await this.wpClient.get('/wp-json/wp/v2/scl_site_settings', {
+        params: {
+          per_page: 1,
+          _embed: true,
+        },
+      })
+
+      if (settingsResponse.data.length === 0) {
+        return {
+          isLive: false,
+          kickUsername: null,
+        }
+      }
+
+      const settingsPost = settingsResponse.data[0] as {
+        id: number
+        acf?: {
+          livestream_live?: boolean | string | number
+          kick_username?: string
+        }
+        meta?: {
+          livestream_live?: string[]
+          kick_username?: string[]
+        }
+      }
+
+      // Extract livestream_live and fallback kick_username from site settings
+      let isLive = false
+      let fallbackKickUsername: string | null = null
+
+      if (settingsPost.acf) {
+        const isLiveValue = settingsPost.acf.livestream_live
+        isLive = isLiveValue === true || isLiveValue === '1' || isLiveValue === 1 || isLiveValue === 'true'
+        fallbackKickUsername = settingsPost.acf.kick_username || null
+      } else if (settingsPost.meta) {
+        isLive = settingsPost.meta.livestream_live?.[0] === '1' || settingsPost.meta.livestream_live?.[0] === 'true'
+        fallbackKickUsername = settingsPost.meta.kick_username?.[0] || null
+      }
+
+      // If ACF not exposed, try fetching ACF fields directly via ACF REST API
+      if (!settingsPost.acf && !settingsPost.meta) {
+        try {
+          const acfResponse = await this.wpClient.get(`/wp-json/acf/v3/scl_site_settings/${settingsPost.id}`)
+          if (acfResponse.data && acfResponse.data.acf) {
+            const isLiveValue = acfResponse.data.acf.livestream_live
+            isLive = isLiveValue === true || isLiveValue === '1' || isLiveValue === 1 || isLiveValue === 'true'
+            fallbackKickUsername = acfResponse.data.acf.kick_username || null
+          }
+        } catch (acfError) {
+          // ACF REST API might not be available, that's okay
+          console.warn('ACF REST API not available, using defaults')
+        }
+      }
+
+      // If livestream_live is true, check for active livestreams
+      let kickUsername: string | null = fallbackKickUsername
+
+      if (isLive) {
+        try {
+          // Get all livestreams post type
+          const livestreamsResponse = await this.wpClient.get('/wp-json/wp/v2/livestreams', {
+            params: {
+              per_page: 100, // Get enough to check all active streams
+              _embed: true,
+            },
+          })
+
+          const now = new Date()
+          const currentTime = now.getTime()
+
+          // Find the first livestream that is currently active (between start and end)
+          for (const livestream of livestreamsResponse.data) {
+            const livestreamPost = livestream as {
+              id: number
+              acf?: {
+                start?: string
+                end?: string
+                kick_username?: string
+              }
+              meta?: {
+                start?: string[]
+                end?: string[]
+                kick_username?: string[]
+              }
+            }
+
+            let startDate: Date | null = null
+            let endDate: Date | null = null
+            let livestreamKickUsername: string | null = null
+
+            if (livestreamPost.acf) {
+              if (livestreamPost.acf.start) {
+                startDate = new Date(livestreamPost.acf.start)
+              }
+              if (livestreamPost.acf.end) {
+                endDate = new Date(livestreamPost.acf.end)
+              }
+              livestreamKickUsername = livestreamPost.acf.kick_username || null
+            } else if (livestreamPost.meta) {
+              if (livestreamPost.meta.start?.[0]) {
+                startDate = new Date(livestreamPost.meta.start[0])
+              }
+              if (livestreamPost.meta.end?.[0]) {
+                endDate = new Date(livestreamPost.meta.end[0])
+              }
+              livestreamKickUsername = livestreamPost.meta.kick_username?.[0] || null
+            }
+
+            // If ACF not exposed, try ACF REST API
+            if (!livestreamPost.acf && !livestreamPost.meta) {
+              try {
+                const acfResponse = await this.wpClient.get(`/wp-json/acf/v3/livestreams/${livestreamPost.id}`)
+                if (acfResponse.data && acfResponse.data.acf) {
+                  if (acfResponse.data.acf.start) {
+                    startDate = new Date(acfResponse.data.acf.start)
+                  }
+                  if (acfResponse.data.acf.end) {
+                    endDate = new Date(acfResponse.data.acf.end)
+                  }
+                  livestreamKickUsername = acfResponse.data.acf.kick_username || null
+                }
+              } catch (acfError) {
+                // Continue to next livestream
+              }
+            }
+
+            // Check if current time is between start and end
+            if (startDate && endDate) {
+              const startTime = startDate.getTime()
+              const endTime = endDate.getTime()
+
+              if (currentTime >= startTime && currentTime <= endTime) {
+                // Found an active livestream
+                if (livestreamKickUsername) {
+                  kickUsername = livestreamKickUsername
+                }
+                break // Use the first active livestream found
+              }
+            } else if (startDate && !endDate) {
+              // If only start date is set, consider it active if current time is after start
+              const startTime = startDate.getTime()
+              if (currentTime >= startTime) {
+                if (livestreamKickUsername) {
+                  kickUsername = livestreamKickUsername
+                }
+                break
+              }
+            }
+          }
+        } catch (livestreamsError) {
+          console.error('Error fetching livestreams:', livestreamsError)
+          // Continue with fallback username
+        }
+      }
+
+      const settings: SiteSettings = {
+        isLive,
+        kickUsername,
+      }
+
+      await this.cacheManager.set(cacheKey, settings, 60) // Cache for 1 minute (settings change frequently)
+      return settings
+    } catch (error) {
+      console.error('WordPress API error (site_settings):', error)
+      return {
+        isLive: false,
+        kickUsername: null,
+      }
     }
   }
 }
