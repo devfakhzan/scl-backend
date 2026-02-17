@@ -47,9 +47,14 @@ export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect
     // Verify the server is actually using this namespace
     if (this.server) {
       const serverAny = this.server as any
-      const serverNamespaces = serverAny._nsps ? Object.keys(serverAny._nsps) : []
-      this.logger.log(`Socket.IO server namespaces: ${JSON.stringify(serverNamespaces)}`)
-      this.logger.log(`Current server namespace path: ${serverAny.name || 'unknown'}`)
+      // this.server is the namespace server, get the main server
+      const mainServer = serverAny.server || serverAny._server
+      if (mainServer) {
+        const mainServerAny = mainServer as any
+        const registeredNamespaces = mainServerAny._nsps ? Object.keys(mainServerAny._nsps) : []
+        this.logger.log(`Socket.IO main server registered namespaces: ${JSON.stringify(registeredNamespaces)}`)
+      }
+      this.logger.log(`Current namespace server path: ${serverAny.name || 'unknown'}`)
     } else {
       this.logger.warn('Socket.IO server not initialized yet')
     }
