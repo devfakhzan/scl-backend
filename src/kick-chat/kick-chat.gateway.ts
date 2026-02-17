@@ -27,6 +27,7 @@ console.log(`[KickChatGateway] Module loading - namespace will be: ${NAMESPACE},
     credentials: true,
   },
   namespace: NAMESPACE,
+  path: '/socket.io', // Socket.IO HTTP handler path (default, but explicit for clarity)
 })
 export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
   @WebSocketServer()
