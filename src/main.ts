@@ -1,13 +1,14 @@
 import { NestFactory } from '@nestjs/core'
 import { ValidationPipe } from '@nestjs/common'
-import { IoAdapter } from '@nestjs/platform-socket.io'
+import { ApiIoAdapter } from './adapters/api-io.adapter'
 import { AppModule } from './app.module'
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule)
   
-  // Use Socket.IO adapter for WebSocket gateways
-  app.useWebSocketAdapter(new IoAdapter(app))
+  // Use custom Socket.IO adapter that handles /api prefix from ingress
+  // The adapter rewrites /api/kick-chat paths to /kick-chat at the Socket.IO engine level
+  app.useWebSocketAdapter(new ApiIoAdapter(app))
   
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
