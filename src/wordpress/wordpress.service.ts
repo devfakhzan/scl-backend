@@ -101,6 +101,7 @@ export class WordpressService {
 
     try {
       const wpTimezone = await this.getWordPressTimezone()
+      console.log(`[parseACFDateTime] Parsing: "${dateTimeString}" in timezone: ${wpTimezone}`)
 
       // ACF typically returns datetime in format: "Y-m-d H:i:s" (e.g., "2026-02-17 14:00:00")
       // Parse it as if it's in WordPress's timezone
@@ -154,6 +155,7 @@ export class WordpressService {
       // fromZonedTime treats the Date object as if it represents a time in the specified timezone
       // and converts it to UTC
       const utcDate = fromZonedTime(parsedDate, wpTimezone)
+      console.log(`[parseACFDateTime] Converted "${dateTimeString}" (${wpTimezone}) → ${utcDate.toISOString()} (UTC)`)
       return utcDate
     } catch (error) {
       console.error(`Error parsing ACF datetime "${dateTimeString}":`, error)
@@ -411,6 +413,8 @@ export class WordpressService {
           const now = new Date()
           const currentTime = now.getTime()
 
+          console.log(`[Livestream Check] Found ${livestreamsResponse.data.length} livestream post(s)`)
+          
           // Find the first livestream that is currently active (between start and end)
           for (const livestream of livestreamsResponse.data) {
             const livestreamPost = livestream as {
@@ -432,6 +436,8 @@ export class WordpressService {
             let livestreamKickUsername: string | null = null
 
             if (livestreamPost.acf) {
+              console.log(`[Livestream Check] Post ID ${livestreamPost.id} - Using ACF fields`)
+              console.log(`  ACF data:`, JSON.stringify(livestreamPost.acf, null, 2))
               if (livestreamPost.acf.start) {
                 startDate = await this.parseACFDateTime(livestreamPost.acf.start)
               }
@@ -440,6 +446,8 @@ export class WordpressService {
               }
               livestreamKickUsername = livestreamPost.acf.kick_username || null
             } else if (livestreamPost.meta) {
+              console.log(`[Livestream Check] Post ID ${livestreamPost.id} - Using meta fields`)
+              console.log(`  Meta data:`, JSON.stringify(livestreamPost.meta, null, 2))
               if (livestreamPost.meta.start?.[0]) {
                 startDate = await this.parseACFDateTime(livestreamPost.meta.start[0])
               }
@@ -472,22 +480,43 @@ export class WordpressService {
               const startTime = startDate.getTime()
               const endTime = endDate.getTime()
 
+              console.log(`[Livestream Check] Post ID: ${livestreamPost.id}`)
+              console.log(`  Start (raw): ${livestreamPost.acf?.start || livestreamPost.meta?.start?.[0]}`)
+              console.log(`  End (raw): ${livestreamPost.acf?.end || livestreamPost.meta?.end?.[0]}`)
+              console.log(`  Start (parsed UTC): ${startDate.toISOString()}`)
+              console.log(`  End (parsed UTC): ${endDate.toISOString()}`)
+              console.log(`  Current (UTC): ${new Date(currentTime).toISOString()}`)
+              console.log(`  Comparison: ${currentTime} >= ${startTime} && ${currentTime} <= ${endTime}`)
+              console.log(`  Result: ${currentTime >= startTime && currentTime <= endTime}`)
+
               if (currentTime >= startTime && currentTime <= endTime) {
                 // Found an active livestream
+                console.log(`  ✓ Livestream is ACTIVE! Using kick_username: ${livestreamKickUsername}`)
                 if (livestreamKickUsername) {
                   kickUsername = livestreamKickUsername
                 }
                 break // Use the first active livestream found
+              } else {
+                console.log(`  ✗ Livestream is NOT active (outside time range)`)
               }
             } else if (startDate && !endDate) {
               // If only start date is set, consider it active if current time is after start
               const startTime = startDate.getTime()
+              console.log(`[Livestream Check] Post ID: ${livestreamPost.id} (no end time)`)
+              console.log(`  Start (parsed UTC): ${startDate.toISOString()}`)
+              console.log(`  Current (UTC): ${new Date(currentTime).toISOString()}`)
+              console.log(`  Comparison: ${currentTime} >= ${startTime}`)
               if (currentTime >= startTime) {
+                console.log(`  ✓ Livestream is ACTIVE! (started, no end time)`)
                 if (livestreamKickUsername) {
                   kickUsername = livestreamKickUsername
                 }
                 break
+              } else {
+                console.log(`  ✗ Livestream has not started yet`)
               }
+            } else {
+              console.log(`[Livestream Check] Post ID: ${livestreamPost.id} - Missing start/end dates`)
             }
           }
         } catch (livestreamsError) {
