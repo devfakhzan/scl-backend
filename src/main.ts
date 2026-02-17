@@ -19,6 +19,10 @@ async function bootstrap() {
       process.env.FRONTEND_URL || 'http://localhost:5173',
       'http://localhost:5174',
       'http://localhost', // For nginx proxy on port 80
+      'https://staging.shadowcombatleague.com',
+      'https://www.staging.shadowcombatleague.com',
+      'https://shadowcombatleague.com',
+      'https://www.shadowcombatleague.com',
     ],
     credentials: true,
   })
