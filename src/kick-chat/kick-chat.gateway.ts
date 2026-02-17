@@ -15,16 +15,16 @@ import { KickChatService } from './kick-chat.service'
 
 // Namespace is determined at runtime from environment variable
 // Local: /kick-chat, Staging/Production: /api/kick-chat
-const getNamespace = () => {
-  return process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
-}
+// IMPORTANT: This is evaluated when the module is loaded, so env var must be set before app starts
+const NAMESPACE = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
+console.log(`[KickChatGateway] Module loading - namespace will be: ${NAMESPACE}, env var: ${process.env.SOCKET_IO_NAMESPACE || 'not set'}`)
 
 @WebSocketGateway({
   cors: {
     origin: '*', // In production, specify your frontend URL
     credentials: true,
   },
-  namespace: getNamespace(),
+  namespace: NAMESPACE,
 })
 export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
   @WebSocketServer()
