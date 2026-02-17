@@ -111,16 +111,29 @@ export class WordpressService {
 
       // Format: "Y-m-d H:i:s" (e.g., "2026-02-17 14:00:00")
       if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateTimeStr)) {
-        parsedDate = parse(dateTimeStr, 'yyyy-MM-dd HH:mm:ss', new Date())
+        // Parse components manually to avoid timezone interpretation
+        const [datePart, timePart] = dateTimeStr.split(' ')
+        const [year, month, day] = datePart.split('-').map(Number)
+        const [hour, minute, second] = timePart.split(':').map(Number)
+        // Create a date object with these components (will be treated as local time)
+        // We'll use fromZonedTime to properly convert from WordPress timezone
+        parsedDate = new Date(year, month - 1, day, hour, minute, second)
       }
       // Format: "Y-m-d H:i" (e.g., "2026-02-17 14:00")
       else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dateTimeStr)) {
-        parsedDate = parse(dateTimeStr, 'yyyy-MM-dd HH:mm', new Date())
+        const [datePart, timePart] = dateTimeStr.split(' ')
+        const [year, month, day] = datePart.split('-').map(Number)
+        const [hour, minute] = timePart.split(':').map(Number)
+        parsedDate = new Date(year, month - 1, day, hour, minute, 0)
       }
       // Format: ISO 8601 with timezone (e.g., "2026-02-17T14:00:00+00:00")
       else if (dateTimeStr.includes('T') || dateTimeStr.includes('Z') || dateTimeStr.includes('+') || dateTimeStr.includes('-')) {
         // If it already has timezone info, parse directly
         parsedDate = new Date(dateTimeStr)
+        // If it has timezone info, return it directly (already in correct timezone)
+        if (!isNaN(parsedDate.getTime())) {
+          return parsedDate
+        }
       }
       // Try default Date parsing as fallback
       else {
@@ -138,7 +151,8 @@ export class WordpressService {
       }
 
       // Convert from WordPress timezone to UTC
-      // The parsed date is in WordPress's local timezone, so we need to treat it as such
+      // fromZonedTime treats the Date object as if it represents a time in the specified timezone
+      // and converts it to UTC
       const utcDate = fromZonedTime(parsedDate, wpTimezone)
       return utcDate
     } catch (error) {
