@@ -11,6 +11,7 @@ import { HealthModule } from './health/health.module'
 import { MetricsModule } from './metrics/metrics.module'
 import { KickChatModule } from './kick-chat/kick-chat.module'
 import { KickAuthModule } from './kick-auth/kick-auth.module'
+import { TestWebSocketModule } from './test-websocket/test-websocket.module'
 import { MetricsInterceptor } from './metrics/metrics.interceptor'
 import { RedisConfig } from './config/redis.config'
 
@@ -33,6 +34,7 @@ import { RedisConfig } from './config/redis.config'
     HealthModule,
     KickChatModule,
     KickAuthModule,
+    TestWebSocketModule, // Test gateway to debug Socket.IO
   ],
   providers: [
     {
