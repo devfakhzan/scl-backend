@@ -9,13 +9,18 @@ async function bootstrap() {
   // Log Socket.IO namespace before adapter initialization
   console.log(`[main.ts] SOCKET_IO_NAMESPACE env var: ${process.env.SOCKET_IO_NAMESPACE || 'not set'}`)
   
-  // Use standard Socket.IO adapter
-  app.useWebSocketAdapter(new IoAdapter(app))
-  
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
     transform: true,
   }))
+  
+  // Use standard Socket.IO adapter AFTER pipes but BEFORE listen
+  // This ensures Socket.IO HTTP handler is mounted before Express catch-all
+  const ioAdapter = new IoAdapter(app)
+  app.useWebSocketAdapter(ioAdapter)
+  
+  // Log after adapter is set up
+  console.log(`[main.ts] Socket.IO adapter initialized`)
   
   app.enableCors({
     origin: [
