@@ -6,6 +6,9 @@ import { AppModule } from './app.module'
 async function bootstrap() {
   const app = await NestFactory.create(AppModule)
   
+  // Log Socket.IO namespace before adapter initialization
+  console.log(`[main.ts] SOCKET_IO_NAMESPACE env var: ${process.env.SOCKET_IO_NAMESPACE || 'not set'}`)
+  
   // Use standard Socket.IO adapter
   app.useWebSocketAdapter(new IoAdapter(app))
   
