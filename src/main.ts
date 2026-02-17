@@ -71,17 +71,18 @@ async function bootstrap() {
   console.log(`Application is running on: http://0.0.0.0:${port}`)
   
   // After listen, ensure namespace is initialized if it wasn't before
-  const namespace = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
-  if (namespace && namespace !== '/') {
+  const namespacePostListen = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
+  if (namespacePostListen && namespacePostListen !== '/') {
     try {
       const httpServer = app.getHttpServer()
       const io = (httpServer as any).io || (httpServer as any)._io
       if (io) {
-        const nsp = io.of(namespace)
-        console.log(`[main.ts] ✅ Post-listen: Namespace ${namespace} confirmed initialized`)
+        io.of(namespacePostListen)
+        console.log(`[main.ts] ✅ Post-listen: Namespace ${namespacePostListen} confirmed initialized`)
       }
-    } catch (e: any) {
-      console.error(`[main.ts] ❌ Post-listen namespace init error: ${e.message}`)
+    } catch (e: unknown) {
+      const error = e as Error
+      console.error(`[main.ts] ❌ Post-listen namespace init error: ${error.message}`)
     }
   }
 }
