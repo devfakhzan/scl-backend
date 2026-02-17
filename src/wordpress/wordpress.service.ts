@@ -278,6 +278,7 @@ export class WordpressService {
         console.log('[getSiteSettings] isLive is true, checking for active livestreams...')
         try {
           // Get all livestreams post type
+          console.log('[getSiteSettings] Fetching livestreams from WordPress API...')
           const livestreamsResponse = await this.wpClient.get('/wp-json/wp/v2/livestreams', {
             params: {
               per_page: 100, // Get enough to check all active streams
@@ -367,8 +368,12 @@ export class WordpressService {
               }
             }
           }
-        } catch (livestreamsError) {
-          console.error('Error fetching livestreams:', livestreamsError)
+          } catch (livestreamsError) {
+          console.error('[getSiteSettings] Error fetching livestreams:', livestreamsError)
+          if (livestreamsError instanceof Error) {
+            console.error('[getSiteSettings] Error message:', livestreamsError.message)
+            console.error('[getSiteSettings] Error stack:', livestreamsError.stack)
+          }
           // Continue with fallback username
         }
       }
