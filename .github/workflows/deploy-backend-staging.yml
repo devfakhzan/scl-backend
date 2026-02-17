@@ -85,4 +85,3 @@ jobs:
         run: |
           kubectl get pods -n ${{ env.NAMESPACE }} -l app=scl-backend
           kubectl get svc -n ${{ env.NAMESPACE }} -l app=scl-backend
-# Trigger rebuild
