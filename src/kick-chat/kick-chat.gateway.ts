@@ -27,6 +27,12 @@ export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect
   server: Server
 
   private readonly logger = new Logger(KickChatGateway.name)
+
+  onModuleInit() {
+    // Log the namespace being used
+    const namespace = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
+    this.logger.log(`Socket.IO namespace configured: ${namespace}`)
+    this.logger.log(`Socket.IO server listening at: ${namespace}/socket.io/`)
   private clientChannels: Map<string, string> = new Map() // socketId -> channelName
 
   constructor(
