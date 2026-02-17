@@ -22,6 +22,23 @@ async function bootstrap() {
   // Log after adapter is set up
   console.log(`[main.ts] Socket.IO adapter initialized`)
   
+  // Force initialization of Socket.IO namespaces before server starts
+  // This ensures namespace HTTP handlers are mounted
+  const namespace = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
+  if (namespace && namespace !== '/') {
+    try {
+      const httpServer = app.getHttpServer()
+      const io = (httpServer as any).io || (httpServer as any)._io
+      if (io) {
+        // Access the namespace to force its initialization and HTTP handler mounting
+        const nsp = io.of(namespace)
+        console.log(`[main.ts] Initialized Socket.IO namespace: ${namespace}`)
+      }
+    } catch (e: any) {
+      console.warn(`[main.ts] Could not pre-initialize namespace ${namespace}: ${e.message}`)
+    }
+  }
+  
   app.enableCors({
     origin: [
       process.env.FRONTEND_URL || 'http://localhost:5173',
