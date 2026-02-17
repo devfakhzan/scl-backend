@@ -75,9 +75,17 @@ export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect
             const nsp = mainServerAny.of(namespace)
             if (nsp) {
               this.logger.log(`✅ Successfully accessed namespace ${namespace} via .of()`)
-              // Check if it's now in _nsps
-              const updatedKeys = mainServerAny._nsps ? Object.keys(mainServerAny._nsps) : []
-              this.logger.log(`Updated _nsps keys after .of(): ${JSON.stringify(updatedKeys)}`)
+              // Force register the namespace by adding it to _nsps if it's not there
+              // Socket.IO lazy-loads namespaces, so we need to ensure it's registered
+              if (!mainServerAny._nsps[namespace]) {
+                this.logger.log(`Forcing namespace registration in _nsps...`)
+                mainServerAny._nsps[namespace] = nsp
+                const updatedKeys = mainServerAny._nsps ? Object.keys(mainServerAny._nsps) : []
+                this.logger.log(`Updated _nsps keys after manual registration: ${JSON.stringify(updatedKeys)}`)
+              } else {
+                const updatedKeys = mainServerAny._nsps ? Object.keys(mainServerAny._nsps) : []
+                this.logger.log(`Namespace already in _nsps: ${JSON.stringify(updatedKeys)}`)
+              }
             }
           } catch (e: any) {
             this.logger.error(`❌ Failed to access namespace ${namespace}: ${e.message}`)
