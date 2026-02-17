@@ -4,6 +4,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager'
 import { Cache } from 'cache-manager'
 import axios, { AxiosInstance } from 'axios'
 import { ConfigService } from '@nestjs/config'
+import { fromZonedTime } from 'date-fns-tz'
 
 export interface WordPressPost {
   id: number
@@ -200,6 +201,129 @@ export class WordpressService {
     } catch (error) {
       console.error('WordPress API error (game_ref_code):', error)
       return null
+    }
+  }
+
+  private wpTimezone: string | null = null
+  private wpTimezoneCacheKey = 'wp:timezone'
+
+  /**
+   * Get WordPress timezone setting
+   * Priority:
+   * 1. WORDPRESS_TIMEZONE environment variable
+   * 2. Try WordPress REST API endpoint (if custom endpoint exists)
+   * 3. Fall back to UTC
+   */
+  private async getWordPressTimezone(): Promise<string> {
+    // Check cache first
+    if (this.wpTimezone) {
+      return this.wpTimezone
+    }
+
+    const cached = await this.cacheManager.get<string>(this.wpTimezoneCacheKey)
+    if (cached) {
+      this.wpTimezone = cached
+      return cached
+    }
+
+    // First priority: Check environment variable
+    const envTimezone = this.configService.get<string>('WORDPRESS_TIMEZONE')
+    if (envTimezone) {
+      this.wpTimezone = envTimezone
+      await this.cacheManager.set(this.wpTimezoneCacheKey, this.wpTimezone, 3600) // Cache for 1 hour
+      return this.wpTimezone
+    }
+
+    // Second priority: Try WordPress REST API endpoint (if it exists)
+    try {
+      const response = await this.wpClient.get('/wp-json/scl/v1/timezone', {
+        timeout: 5000,
+      })
+      if (response.data && response.data.timezone) {
+        this.wpTimezone = response.data.timezone
+        await this.cacheManager.set(this.wpTimezoneCacheKey, this.wpTimezone, 3600)
+        return this.wpTimezone
+      }
+    } catch (customEndpointError) {
+      // Custom endpoint doesn't exist, that's okay
+    }
+
+    // Fallback: Default to UTC
+    // Note: Set WORDPRESS_TIMEZONE environment variable to match WordPress admin timezone setting
+    // (Settings → General → Timezone in WordPress admin)
+    this.wpTimezone = 'UTC'
+    await this.cacheManager.set(this.wpTimezoneCacheKey, this.wpTimezone, 3600)
+    return this.wpTimezone
+  }
+
+  /**
+   * Parse ACF datetime string in WordPress's timezone context
+   * ACF returns datetime strings without timezone info, but they're in WordPress's local timezone
+   */
+  private async parseACFDateTime(dateTimeString: string): Promise<Date | null> {
+    try {
+      const wpTimezone = await this.getWordPressTimezone()
+      const dateTimeStr = dateTimeString.trim()
+
+      console.log(`[parseACFDateTime] Parsing: "${dateTimeStr}" in timezone: ${wpTimezone}`)
+
+      let parsedDate: Date
+
+      // Format: "Y-m-d H:i:s" (e.g., "2026-02-17 14:00:00")
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateTimeStr)) {
+        // Parse components manually to avoid timezone interpretation
+        const [datePart, timePart] = dateTimeStr.split(' ')
+        const [year, month, day] = datePart.split('-').map(Number)
+        const [hour, minute, second] = timePart.split(':').map(Number)
+        // Create a date object with these components (will be treated as local time)
+        // We'll use fromZonedTime to properly convert from WordPress timezone
+        parsedDate = new Date(year, month - 1, day, hour, minute, second)
+      }
+      // Format: "Y-m-d H:i" (e.g., "2026-02-17 14:00")
+      else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dateTimeStr)) {
+        const [datePart, timePart] = dateTimeStr.split(' ')
+        const [year, month, day] = datePart.split('-').map(Number)
+        const [hour, minute] = timePart.split(':').map(Number)
+        parsedDate = new Date(year, month - 1, day, hour, minute, 0)
+      }
+      // Format: ISO 8601 with timezone (e.g., "2026-02-17T14:00:00+00:00")
+      else if (dateTimeStr.includes('T') || dateTimeStr.includes('Z') || dateTimeStr.includes('+') || dateTimeStr.includes('-')) {
+        // If it already has timezone info, parse directly
+        parsedDate = new Date(dateTimeStr)
+        // If it has timezone info, return it directly (already in correct timezone)
+        if (!isNaN(parsedDate.getTime())) {
+          return parsedDate
+        }
+      }
+      // Try default Date parsing as fallback
+      else {
+        parsedDate = new Date(dateTimeStr)
+      }
+
+      if (!parsedDate || isNaN(parsedDate.getTime())) {
+        console.warn(`Failed to parse ACF datetime: ${dateTimeString}`)
+        return null
+      }
+
+      // If WordPress timezone is UTC, we can use the date directly
+      if (wpTimezone === 'UTC' || wpTimezone === 'Etc/UTC') {
+        return parsedDate
+      }
+
+      // Convert from WordPress timezone to UTC
+      // fromZonedTime treats the Date object as if it represents a time in the specified timezone
+      // and converts it to UTC
+      const utcDate = fromZonedTime(parsedDate, wpTimezone)
+      console.log(`[parseACFDateTime] Converted "${dateTimeString}" (${wpTimezone}) → ${utcDate.toISOString()} (UTC)`)
+      return utcDate
+    } catch (error) {
+      console.error(`Error parsing ACF datetime "${dateTimeString}":`, error)
+      // Fallback to simple Date parsing
+      try {
+        return new Date(dateTimeString)
+      } catch {
+        return null
+      }
     }
   }
 
