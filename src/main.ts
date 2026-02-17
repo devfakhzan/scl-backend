@@ -1,8 +1,14 @@
 import { NestFactory } from '@nestjs/core'
-import { ValidationPipe } from '@nestjs/common'
+import { ValidationPipe, Logger } from '@nestjs/common'
 import { IoAdapter } from '@nestjs/platform-socket.io'
 import { ServerOptions } from 'socket.io'
 import { AppModule } from './app.module'
+
+// Prevent unhandled promise rejections (e.g. from kick-js/Puppeteer) from crashing the process
+const logger = new Logger('Bootstrap')
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error(`Unhandled promise rejection: ${reason}`)
+})
 
 class SocketIOAdapter extends IoAdapter {
   createIOServer(port: number, options?: ServerOptions) {
@@ -39,6 +45,6 @@ async function bootstrap() {
   
   const port = process.env.PORT || 3333
   await app.listen(port, '0.0.0.0')
-  console.log(`Application is running on: http://0.0.0.0:${port}`)
+  logger.log(`Application is running on: http://0.0.0.0:${port}`)
 }
 bootstrap()

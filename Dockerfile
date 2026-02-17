@@ -25,6 +25,25 @@ RUN test -f dist/src/main.js || (echo "ERROR: dist/src/main.js not found!" && ec
 # Production stage
 FROM node:20-alpine
 
+# Install Chromium for Puppeteer (needed by @retconned/kick-js)
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+# Create a wrapper that injects --no-sandbox (required when running as root in Docker)
+# kick-js hardcodes puppeteer.launch() without --no-sandbox, so we wrap the binary
+RUN mv /usr/bin/chromium-browser /usr/bin/chromium-browser-unwrapped \
+    && printf '#!/bin/sh\nexec /usr/bin/chromium-browser-unwrapped --no-sandbox --disable-setuid-sandbox --disable-gpu --disable-dev-shm-usage "$@"\n' > /usr/bin/chromium-browser \
+    && chmod +x /usr/bin/chromium-browser
+
+# Tell Puppeteer to use the installed Chromium instead of downloading its own
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 # Enable Corepack for Yarn 4.11.0 (needed for Prisma commands)
 RUN corepack enable
 
