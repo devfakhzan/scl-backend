@@ -4,6 +4,6 @@ import { KickChatGateway } from './kick-chat.gateway'
 
 @Module({
   providers: [KickChatService, KickChatGateway],
-  exports: [KickChatService],
+  exports: [KickChatService, KickChatGateway], // Export gateway so it's discovered
 })
 export class KickChatModule {}
