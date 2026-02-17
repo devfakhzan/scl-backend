@@ -1,7 +1,18 @@
 import { NestFactory } from '@nestjs/core'
 import { ValidationPipe } from '@nestjs/common'
 import { IoAdapter } from '@nestjs/platform-socket.io'
+import { ServerOptions } from 'socket.io'
 import { AppModule } from './app.module'
+
+class SocketIOAdapter extends IoAdapter {
+  createIOServer(port: number, options?: ServerOptions) {
+    return super.createIOServer(port, {
+      ...options,
+      path: '/api/socket.io',
+      cors: { origin: '*', credentials: true },
+    })
+  }
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule)
@@ -11,8 +22,7 @@ async function bootstrap() {
     transform: true,
   }))
   
-  // Socket.IO adapter — path defaults to /socket.io
-  app.useWebSocketAdapter(new IoAdapter(app))
+  app.useWebSocketAdapter(new SocketIOAdapter(app))
   
   app.enableCors({
     origin: [

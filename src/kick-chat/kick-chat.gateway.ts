@@ -17,8 +17,6 @@ import { KickChatService } from './kick-chat.service'
     origin: '*',
     credentials: true,
   },
-  // Use /api/socket.io so it routes through the existing /api ingress rule
-  // ALB forwards /api/* to the backend — including /api/socket.io/*
   path: '/api/socket.io',
 })
 export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {

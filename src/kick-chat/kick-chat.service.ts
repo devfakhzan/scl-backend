@@ -72,11 +72,6 @@ export class KickChatService implements OnModuleDestroy {
    */
   private handleChatMessage(channelName: string, message: MessageData) {
     try {
-      // Log the full message structure to debug color/badges (first message only to avoid spam)
-      if (Math.random() < 0.1) { // Log ~10% of messages to see structure
-        this.logger.log(`Sample message structure: ${JSON.stringify(message, null, 2)}`)
-      }
-      
       // Try different paths for color
       const color = 
         (message as any)?.sender?.identity?.color ||
@@ -97,7 +92,6 @@ export class KickChatService implements OnModuleDestroy {
         badges,
       }
 
-      this.logger.debug(`Received chat message from ${channelName}: ${chatMessage.username}: ${chatMessage.content}, color: ${chatMessage.color || 'none'}`)
 
       // Emit to EventEmitter for WebSocket gateway
       this.eventEmitter.emit('kick-chat.message', { channelName, message: chatMessage })
