@@ -286,8 +286,11 @@ export class WordpressService {
             },
           })
 
+          console.log(`[getSiteSettings] Received ${livestreamsResponse.data?.length || 0} livestream post(s) from WordPress`)
+
           const now = new Date()
           const currentTime = now.getTime()
+          console.log(`[getSiteSettings] Current UTC time: ${now.toISOString()}`)
 
           // Find the first livestream that is currently active (between start and end)
           for (const livestream of livestreamsResponse.data) {
