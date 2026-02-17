@@ -22,28 +22,30 @@ async function bootstrap() {
   // Log after adapter is set up
   console.log(`[main.ts] Socket.IO adapter initialized`)
   
-  // Force initialization of Socket.IO namespaces before server starts
-  // This ensures namespace HTTP handlers are mounted
+  // Force initialization of Socket.IO namespaces AFTER adapter but BEFORE listen
+  // Access the Socket.IO instance from the adapter to initialize namespaces
   const namespace = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
   if (namespace && namespace !== '/') {
     try {
-      // Get the HTTP server - it should exist after adapter is set up
+      // Get the HTTP server
       const httpServer = app.getHttpServer()
-      console.log(`[main.ts] HTTP server obtained, looking for Socket.IO instance...`)
       
-      // Try multiple ways to access the Socket.IO instance
-      const io = (httpServer as any).io || (httpServer as any)._io || (httpServer as any).socketio
+      // Access Socket.IO instance - it should be attached after adapter initialization
+      // Try to get it from the adapter's internal server
+      const adapterAny = ioAdapter as any
+      const io = adapterAny.io || adapterAny._io || (httpServer as any).io || (httpServer as any)._io
+      
       if (io) {
-        console.log(`[main.ts] Found Socket.IO instance, accessing namespace: ${namespace}`)
-        // Access the namespace to force its initialization and HTTP handler mounting
+        console.log(`[main.ts] Found Socket.IO instance, initializing namespace: ${namespace}`)
+        // Force namespace initialization by accessing it
         const nsp = io.of(namespace)
-        console.log(`[main.ts] ✅ Initialized Socket.IO namespace: ${namespace}`)
+        console.log(`[main.ts] ✅ Namespace ${namespace} initialized, HTTP handler should be mounted`)
       } else {
-        console.warn(`[main.ts] ⚠️ Socket.IO instance not found on HTTP server. Available keys: ${Object.keys(httpServer).join(', ')}`)
+        // If not found, try after listen - but this is less ideal
+        console.warn(`[main.ts] ⚠️ Socket.IO instance not immediately available, will initialize after listen`)
       }
     } catch (e: any) {
-      console.error(`[main.ts] ❌ Could not pre-initialize namespace ${namespace}: ${e.message}`)
-      console.error(`[main.ts] Error stack: ${e.stack}`)
+      console.error(`[main.ts] ❌ Error initializing namespace: ${e.message}`)
     }
   }
   
@@ -67,5 +69,20 @@ async function bootstrap() {
   const port = process.env.PORT || 3333
   await app.listen(port, '0.0.0.0')
   console.log(`Application is running on: http://0.0.0.0:${port}`)
+  
+  // After listen, ensure namespace is initialized if it wasn't before
+  const namespace = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
+  if (namespace && namespace !== '/') {
+    try {
+      const httpServer = app.getHttpServer()
+      const io = (httpServer as any).io || (httpServer as any)._io
+      if (io) {
+        const nsp = io.of(namespace)
+        console.log(`[main.ts] ✅ Post-listen: Namespace ${namespace} confirmed initialized`)
+      }
+    } catch (e: any) {
+      console.error(`[main.ts] ❌ Post-listen namespace init error: ${e.message}`)
+    }
+  }
 }
 bootstrap()
