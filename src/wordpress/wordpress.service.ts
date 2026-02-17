@@ -204,11 +204,14 @@ export class WordpressService {
   }
 
   async getSiteSettings(): Promise<SiteSettings | null> {
+    console.log('[getSiteSettings] Starting site settings fetch...')
     const cacheKey = 'wp:site_settings'
     const cached = await this.cacheManager.get<SiteSettings>(cacheKey)
     if (cached) {
+      console.log('[getSiteSettings] Returning cached settings')
       return cached
     }
+    console.log('[getSiteSettings] Cache miss, fetching from WordPress...')
 
     try {
       // Get the scl_site_settings post type (should only be 1 post)
@@ -269,7 +272,10 @@ export class WordpressService {
       // If livestream_live is true, check for active livestreams
       let kickUsername: string | null = fallbackKickUsername
 
+      console.log(`[getSiteSettings] isLive: ${isLive}, fallbackKickUsername: ${fallbackKickUsername}`)
+
       if (isLive) {
+        console.log('[getSiteSettings] isLive is true, checking for active livestreams...')
         try {
           // Get all livestreams post type
           const livestreamsResponse = await this.wpClient.get('/wp-json/wp/v2/livestreams', {
