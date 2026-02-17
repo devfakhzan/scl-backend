@@ -42,6 +42,19 @@ jobs:
         run: |
           aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
+      - name: Create Kick OAuth secret (if not exists)
+        env:
+          KICK_CLIENT_ID: ${{ secrets.KICK_CLIENT_ID }}
+          KICK_CLIENT_SECRET: ${{ secrets.KICK_CLIENT_SECRET }}
+        run: |
+          # Create secret idempotently (won't fail if already exists)
+          kubectl create secret generic kick-auth-secret \
+            --from-literal=client-id="$KICK_CLIENT_ID" \
+            --from-literal=client-secret="$KICK_CLIENT_SECRET" \
+            -n ${{ env.NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f - || \
+          echo "Secret may already exist, continuing..."
+
       - name: Deploy to Kubernetes
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
