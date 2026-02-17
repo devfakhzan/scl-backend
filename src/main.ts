@@ -27,15 +27,23 @@ async function bootstrap() {
   const namespace = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
   if (namespace && namespace !== '/') {
     try {
+      // Get the HTTP server - it should exist after adapter is set up
       const httpServer = app.getHttpServer()
-      const io = (httpServer as any).io || (httpServer as any)._io
+      console.log(`[main.ts] HTTP server obtained, looking for Socket.IO instance...`)
+      
+      // Try multiple ways to access the Socket.IO instance
+      const io = (httpServer as any).io || (httpServer as any)._io || (httpServer as any).socketio
       if (io) {
+        console.log(`[main.ts] Found Socket.IO instance, accessing namespace: ${namespace}`)
         // Access the namespace to force its initialization and HTTP handler mounting
         const nsp = io.of(namespace)
-        console.log(`[main.ts] Initialized Socket.IO namespace: ${namespace}`)
+        console.log(`[main.ts] ✅ Initialized Socket.IO namespace: ${namespace}`)
+      } else {
+        console.warn(`[main.ts] ⚠️ Socket.IO instance not found on HTTP server. Available keys: ${Object.keys(httpServer).join(', ')}`)
       }
     } catch (e: any) {
-      console.warn(`[main.ts] Could not pre-initialize namespace ${namespace}: ${e.message}`)
+      console.error(`[main.ts] ❌ Could not pre-initialize namespace ${namespace}: ${e.message}`)
+      console.error(`[main.ts] Error stack: ${e.stack}`)
     }
   }
   
