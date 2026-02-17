@@ -47,14 +47,32 @@ export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect
     // Verify the server is actually using this namespace
     if (this.server) {
       const serverAny = this.server as any
-      // this.server is the namespace server, get the main server
-      const mainServer = serverAny.server || serverAny._server
+      this.logger.log(`Namespace server exists: ${!!this.server}`)
+      this.logger.log(`Namespace server name: ${serverAny.name || 'unknown'}`)
+      
+      // Try multiple ways to access the main server
+      const mainServer = serverAny.server || serverAny._server || (this.server as any).io || (this.server as any).parent
       if (mainServer) {
         const mainServerAny = mainServer as any
         const registeredNamespaces = mainServerAny._nsps ? Object.keys(mainServerAny._nsps) : []
         this.logger.log(`Socket.IO main server registered namespaces: ${JSON.stringify(registeredNamespaces)}`)
+        this.logger.log(`Main server _nsps object: ${mainServerAny._nsps ? 'exists' : 'missing'}`)
+        
+        // Try to access the namespace directly
+        if (mainServerAny._nsps && mainServerAny._nsps[namespace]) {
+          this.logger.log(`✅ Namespace ${namespace} found in _nsps`)
+        } else {
+          this.logger.warn(`❌ Namespace ${namespace} NOT found in _nsps`)
+          // List all keys in _nsps
+          if (mainServerAny._nsps) {
+            const allKeys = Object.keys(mainServerAny._nsps)
+            this.logger.log(`All _nsps keys: ${JSON.stringify(allKeys)}`)
+          }
+        }
+      } else {
+        this.logger.warn('Could not find main Socket.IO server')
+        this.logger.log(`serverAny.server: ${!!serverAny.server}, serverAny._server: ${!!serverAny._server}, this.server.io: ${!!(this.server as any).io}`)
       }
-      this.logger.log(`Current namespace server path: ${serverAny.name || 'unknown'}`)
     } else {
       this.logger.warn('Socket.IO server not initialized yet')
     }
