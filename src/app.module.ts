@@ -3,11 +3,14 @@ import { ConfigModule } from '@nestjs/config'
 import { CacheModule } from '@nestjs/cache-manager'
 import { ScheduleModule } from '@nestjs/schedule'
 import { TerminusModule } from '@nestjs/terminus'
+import { EventEmitterModule } from '@nestjs/event-emitter'
 import { APP_INTERCEPTOR } from '@nestjs/core'
 import { GameModule } from './game/game.module'
 import { WordpressModule } from './wordpress/wordpress.module'
 import { HealthModule } from './health/health.module'
 import { MetricsModule } from './metrics/metrics.module'
+import { KickChatModule } from './kick-chat/kick-chat.module'
+import { KickAuthModule } from './kick-auth/kick-auth.module'
 import { MetricsInterceptor } from './metrics/metrics.interceptor'
 import { RedisConfig } from './config/redis.config'
 
@@ -23,10 +26,13 @@ import { RedisConfig } from './config/redis.config'
     }),
     ScheduleModule.forRoot(),
     TerminusModule,
+    EventEmitterModule.forRoot(),
     MetricsModule,
     GameModule,
     WordpressModule,
     HealthModule,
+    KickChatModule,
+    KickAuthModule,
   ],
   providers: [
     {
