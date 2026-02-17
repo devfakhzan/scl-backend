@@ -4,6 +4,8 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager'
 import { Cache } from 'cache-manager'
 import axios, { AxiosInstance } from 'axios'
 import { ConfigService } from '@nestjs/config'
+import { fromZonedTime } from 'date-fns-tz'
+import { parse } from 'date-fns'
 
 export interface WordPressPost {
   id: number
@@ -25,6 +27,8 @@ export interface SiteSettings {
 @Injectable()
 export class WordpressService {
   private readonly wpClient: AxiosInstance
+  private wpTimezone: string | null = null
+  private wpTimezoneCacheKey = 'wp:timezone'
 
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
@@ -35,6 +39,117 @@ export class WordpressService {
       baseURL: wpUrl,
       timeout: 10000,
     })
+  }
+
+  /**
+   * Get WordPress timezone setting
+   * Priority:
+   * 1. WORDPRESS_TIMEZONE environment variable (recommended - set this to match WordPress admin timezone)
+   * 2. Try WordPress REST API endpoint (if custom endpoint exists)
+   * 3. Fall back to UTC
+   */
+  private async getWordPressTimezone(): Promise<string> {
+    // Check cache first
+    if (this.wpTimezone) {
+      return this.wpTimezone
+    }
+
+    const cached = await this.cacheManager.get<string>(this.wpTimezoneCacheKey)
+    if (cached) {
+      this.wpTimezone = cached
+      return cached
+    }
+
+    // First priority: Check environment variable
+    const envTimezone = this.configService.get<string>('WORDPRESS_TIMEZONE')
+    if (envTimezone) {
+      this.wpTimezone = envTimezone
+      await this.cacheManager.set(this.wpTimezoneCacheKey, this.wpTimezone, 3600) // Cache for 1 hour
+      return this.wpTimezone
+    }
+
+    // Second priority: Try WordPress REST API endpoint (if it exists)
+    try {
+      const response = await this.wpClient.get('/wp-json/scl/v1/timezone', {
+        timeout: 5000,
+      })
+      if (response.data && response.data.timezone) {
+        this.wpTimezone = response.data.timezone
+        await this.cacheManager.set(this.wpTimezoneCacheKey, this.wpTimezone, 3600)
+        return this.wpTimezone
+      }
+    } catch (customEndpointError) {
+      // Custom endpoint doesn't exist, that's okay
+    }
+
+    // Fallback: Default to UTC
+    // Note: Set WORDPRESS_TIMEZONE environment variable to match WordPress admin timezone setting
+    // (Settings → General → Timezone in WordPress admin)
+    this.wpTimezone = 'UTC'
+    await this.cacheManager.set(this.wpTimezoneCacheKey, this.wpTimezone, 3600)
+    return this.wpTimezone
+  }
+
+  /**
+   * Parse ACF datetime string in WordPress's timezone context
+   * ACF returns datetime strings without timezone info, but they're in WordPress's local timezone
+   */
+  private async parseACFDateTime(dateTimeString: string): Promise<Date | null> {
+    if (!dateTimeString) {
+      return null
+    }
+
+    try {
+      const wpTimezone = await this.getWordPressTimezone()
+
+      // ACF typically returns datetime in format: "Y-m-d H:i:s" (e.g., "2026-02-17 14:00:00")
+      // Parse it as if it's in WordPress's timezone
+      const dateTimeStr = dateTimeString.trim()
+
+      // Try to parse common ACF datetime formats
+      let parsedDate: Date | null = null
+
+      // Format: "Y-m-d H:i:s" (e.g., "2026-02-17 14:00:00")
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateTimeStr)) {
+        parsedDate = parse(dateTimeStr, 'yyyy-MM-dd HH:mm:ss', new Date())
+      }
+      // Format: "Y-m-d H:i" (e.g., "2026-02-17 14:00")
+      else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dateTimeStr)) {
+        parsedDate = parse(dateTimeStr, 'yyyy-MM-dd HH:mm', new Date())
+      }
+      // Format: ISO 8601 with timezone (e.g., "2026-02-17T14:00:00+00:00")
+      else if (dateTimeStr.includes('T') || dateTimeStr.includes('Z') || dateTimeStr.includes('+') || dateTimeStr.includes('-')) {
+        // If it already has timezone info, parse directly
+        parsedDate = new Date(dateTimeStr)
+      }
+      // Try default Date parsing as fallback
+      else {
+        parsedDate = new Date(dateTimeStr)
+      }
+
+      if (!parsedDate || isNaN(parsedDate.getTime())) {
+        console.warn(`Failed to parse ACF datetime: ${dateTimeString}`)
+        return null
+      }
+
+      // If WordPress timezone is UTC, we can use the date directly
+      if (wpTimezone === 'UTC' || wpTimezone === 'Etc/UTC') {
+        return parsedDate
+      }
+
+      // Convert from WordPress timezone to UTC
+      // The parsed date is in WordPress's local timezone, so we need to treat it as such
+      const utcDate = fromZonedTime(parsedDate, wpTimezone)
+      return utcDate
+    } catch (error) {
+      console.error(`Error parsing ACF datetime "${dateTimeString}":`, error)
+      // Fallback to simple Date parsing
+      try {
+        return new Date(dateTimeString)
+      } catch {
+        return null
+      }
+    }
   }
 
   async getPosts(limit = 10, page = 1): Promise<WordPressPost[]> {
@@ -304,18 +419,18 @@ export class WordpressService {
 
             if (livestreamPost.acf) {
               if (livestreamPost.acf.start) {
-                startDate = new Date(livestreamPost.acf.start)
+                startDate = await this.parseACFDateTime(livestreamPost.acf.start)
               }
               if (livestreamPost.acf.end) {
-                endDate = new Date(livestreamPost.acf.end)
+                endDate = await this.parseACFDateTime(livestreamPost.acf.end)
               }
               livestreamKickUsername = livestreamPost.acf.kick_username || null
             } else if (livestreamPost.meta) {
               if (livestreamPost.meta.start?.[0]) {
-                startDate = new Date(livestreamPost.meta.start[0])
+                startDate = await this.parseACFDateTime(livestreamPost.meta.start[0])
               }
               if (livestreamPost.meta.end?.[0]) {
-                endDate = new Date(livestreamPost.meta.end[0])
+                endDate = await this.parseACFDateTime(livestreamPost.meta.end[0])
               }
               livestreamKickUsername = livestreamPost.meta.kick_username?.[0] || null
             }
@@ -326,10 +441,10 @@ export class WordpressService {
                 const acfResponse = await this.wpClient.get(`/wp-json/acf/v3/livestreams/${livestreamPost.id}`)
                 if (acfResponse.data && acfResponse.data.acf) {
                   if (acfResponse.data.acf.start) {
-                    startDate = new Date(acfResponse.data.acf.start)
+                    startDate = await this.parseACFDateTime(acfResponse.data.acf.start)
                   }
                   if (acfResponse.data.acf.end) {
-                    endDate = new Date(acfResponse.data.acf.end)
+                    endDate = await this.parseACFDateTime(acfResponse.data.acf.end)
                   }
                   livestreamKickUsername = acfResponse.data.acf.kick_username || null
                 }
