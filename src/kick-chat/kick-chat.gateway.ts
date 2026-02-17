@@ -9,18 +9,22 @@ import {
 } from '@nestjs/websockets'
 import { Server, Socket } from 'socket.io'
 import { Logger, OnModuleInit } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
 import { EventEmitter2 } from '@nestjs/event-emitter'
 import { KickChatService } from './kick-chat.service'
+
+// Namespace is determined at runtime from environment variable
+// Local: /kick-chat, Staging/Production: /api/kick-chat
+const getNamespace = () => {
+  return process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
+}
 
 @WebSocketGateway({
   cors: {
     origin: '*', // In production, specify your frontend URL
     credentials: true,
   },
-  // Namespace matches what the ingress forwards to the backend
-  // Local: /kick-chat (no ingress, direct connection)
-  // Staging/Production: /api/kick-chat (ingress forwards /api prefix)
-  namespace: process.env.SOCKET_IO_NAMESPACE || '/kick-chat',
+  namespace: getNamespace(),
 })
 export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
   @WebSocketServer()
@@ -35,10 +39,10 @@ export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect
   ) {}
 
   onModuleInit() {
-    // Log the namespace being used
+    // Log the namespace being used (read from env at runtime)
     const namespace = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
     this.logger.log(`Socket.IO namespace configured: ${namespace}`)
-    this.logger.log(`Socket.IO server listening at: ${namespace}/socket.io/`)
+    this.logger.log(`Socket.IO server should be listening at: ${namespace}/socket.io/`)
     
     // Listen for messages from Kick chat service via EventEmitter
     this.eventEmitter.on('kick-chat.message', ({ channelName, message }) => {
