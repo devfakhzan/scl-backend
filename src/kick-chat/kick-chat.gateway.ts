@@ -68,6 +68,21 @@ export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect
             const allKeys = Object.keys(mainServerAny._nsps)
             this.logger.log(`All _nsps keys: ${JSON.stringify(allKeys)}`)
           }
+          
+          // Try to manually access/register the namespace
+          this.logger.log(`Attempting to manually access namespace ${namespace} via .of()...`)
+          try {
+            const nsp = mainServerAny.of(namespace)
+            if (nsp) {
+              this.logger.log(`✅ Successfully accessed namespace ${namespace} via .of()`)
+              // Check if it's now in _nsps
+              const updatedKeys = mainServerAny._nsps ? Object.keys(mainServerAny._nsps) : []
+              this.logger.log(`Updated _nsps keys after .of(): ${JSON.stringify(updatedKeys)}`)
+            }
+          } catch (e: any) {
+            this.logger.error(`❌ Failed to access namespace ${namespace}: ${e.message}`)
+            this.logger.error(`Error stack: ${e.stack}`)
+          }
         }
       } else {
         this.logger.warn('Could not find main Socket.IO server')
