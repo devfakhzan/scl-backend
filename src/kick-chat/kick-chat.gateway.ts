@@ -44,6 +44,11 @@ export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.logger.log(`Socket.IO namespace configured: ${namespace}`)
     this.logger.log(`Socket.IO server should be listening at: ${namespace}/socket.io/`)
     
+    // Verify the server is actually using this namespace
+    const serverNamespaces = this.server ? Object.keys(this.server.nsps || {}) : []
+    this.logger.log(`Socket.IO server namespaces: ${JSON.stringify(serverNamespaces)}`)
+    this.logger.log(`Current server namespace path: ${this.server?.name || 'unknown'}`)
+    
     // Listen for messages from Kick chat service via EventEmitter
     this.eventEmitter.on('kick-chat.message', ({ channelName, message }) => {
       // Log first few messages to debug color data
