@@ -75,6 +75,9 @@ jobs:
           # Also update init container if it exists
           kubectl set image deployment/scl-backend prisma-migrate=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -n ${{ env.NAMESPACE }} || true
           
+          # Also update staging-latest tag for manual deployments
+          kubectl set image deployment/scl-backend backend=$ECR_REGISTRY/$ECR_REPOSITORY:staging-latest prisma-migrate=$ECR_REGISTRY/$ECR_REPOSITORY:staging-latest -n ${{ env.NAMESPACE }} || true
+          
           # Wait for rollout
           kubectl rollout status deployment/scl-backend -n ${{ env.NAMESPACE }} --timeout=5m || true
 
