@@ -1,11 +1,7 @@
 name: Deploy Backend to Staging
 
 on:
-  push:
-    branches: [staging]
-    paths:
-      - '**'  # Trigger on any change in backend repo
-  workflow_dispatch:  # Allow manual triggering
+  workflow_dispatch:  # Manual deployment only - trigger via GitHub Actions UI
 
 env:
   AWS_REGION: ap-southeast-1
