@@ -14,8 +14,10 @@ import { EventEmitter2 } from '@nestjs/event-emitter'
 import { KickChatService } from './kick-chat.service'
 
 // Namespace is determined at runtime from environment variable
-// Local: /kick-chat, Staging/Production: /api/kick-chat
-// IMPORTANT: This is evaluated when the module is loaded, so env var must be set before app starts
+// IMPORTANT: Ingress forwards /api/* to backend, so backend receives the FULL path including /api
+// Local: /kick-chat (no ingress, direct connection)
+// Staging/Production: /api/kick-chat (ingress forwards /api/kick-chat to backend, backend receives /api/kick-chat)
+// This is evaluated when the module is loaded, so env var must be set before app starts
 const NAMESPACE = process.env.SOCKET_IO_NAMESPACE || '/kick-chat'
 console.log(`[KickChatGateway] Module loading - namespace will be: ${NAMESPACE}, env var: ${process.env.SOCKET_IO_NAMESPACE || 'not set'}`)
 
