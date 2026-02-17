@@ -1,26 +1,13 @@
 import { NestFactory } from '@nestjs/core'
 import { ValidationPipe } from '@nestjs/common'
-import { ApiIoAdapter } from './adapters/api-io.adapter'
+import { IoAdapter } from '@nestjs/platform-socket.io'
 import { AppModule } from './app.module'
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule)
   
-  // Get Express instance to add middleware BEFORE Socket.IO adapter
-  const expressApp = app.getHttpAdapter().getInstance()
-  
-  // Middleware to rewrite /api/kick-chat paths BEFORE Socket.IO processes them
-  // This must run before the Socket.IO adapter is initialized
-  expressApp.use((req, res, next) => {
-    if (req.url && req.url.includes('/api/kick-chat/socket.io')) {
-      req.url = req.url.replace('/api/kick-chat', '/kick-chat')
-    }
-    next()
-  })
-  
-  // Use custom Socket.IO adapter that handles /api prefix from ingress
-  // The adapter rewrites /api/kick-chat paths to /kick-chat at the Socket.IO engine level
-  app.useWebSocketAdapter(new ApiIoAdapter(app))
+  // Use standard Socket.IO adapter
+  app.useWebSocketAdapter(new IoAdapter(app))
   
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,

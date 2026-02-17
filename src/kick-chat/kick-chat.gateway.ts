@@ -17,7 +17,10 @@ import { KickChatService } from './kick-chat.service'
     origin: '*', // In production, specify your frontend URL
     credentials: true,
   },
-  namespace: '/kick-chat',
+  // Namespace matches what the ingress forwards to the backend
+  // Local: /kick-chat (no ingress, direct connection)
+  // Staging/Production: /api/kick-chat (ingress forwards /api prefix)
+  namespace: process.env.SOCKET_IO_NAMESPACE || '/kick-chat',
 })
 export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
   @WebSocketServer()
