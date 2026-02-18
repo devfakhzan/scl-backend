@@ -60,6 +60,32 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          # Ensure KICK env vars are present in deployment (add if missing, ignore if already exists)
+          # Check if env vars already exist
+          if ! kubectl get deployment scl-backend -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KICK_CLIENT_ID")]}' | grep -q KICK_CLIENT_ID; then
+            echo "Adding KICK environment variables to deployment..."
+            kubectl patch deployment scl-backend -n ${{ env.NAMESPACE }} --type='json' -p='[
+              {
+                "op": "add",
+                "path": "/spec/template/spec/containers/0/env/-",
+                "value": {
+                  "name": "KICK_CLIENT_ID",
+                  "valueFrom": {"secretKeyRef": {"name": "kick-auth-secret", "key": "client-id"}}
+                }
+              },
+              {
+                "op": "add",
+                "path": "/spec/template/spec/containers/0/env/-",
+                "value": {
+                  "name": "KICK_CLIENT_SECRET",
+                  "valueFrom": {"secretKeyRef": {"name": "kick-auth-secret", "key": "client-secret"}}
+                }
+              }
+            ]'
+          else
+            echo "KICK environment variables already present in deployment"
+          fi
+          
           # Update deployment with new image (use sha-tagged image for both containers in a single command)
           kubectl set image deployment/scl-backend \
             backend=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
