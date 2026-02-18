@@ -92,7 +92,6 @@ export class KickChatService implements OnModuleDestroy {
         badges,
       }
 
-
       // Emit to EventEmitter for WebSocket gateway
       this.eventEmitter.emit('kick-chat.message', { channelName, message: chatMessage })
 

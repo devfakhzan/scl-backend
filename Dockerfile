@@ -13,14 +13,10 @@ RUN yarn install --frozen-lockfile
 COPY . .
 # Copy Prisma config if it exists (Prisma 7 requirement)
 COPY prisma.config.ts* ./
-# Generate Prisma Client and build
-# Note: yarn build already includes prisma generate, but we run it separately for clarity
+# Generate Prisma Client and build NestJS application
 RUN yarn prisma:generate
-# Build NestJS application - use npx nest build directly since yarn build script isn't working
-# Run with verbose output to see what's happening
-RUN npx nest build 2>&1 | tee /tmp/build.log || (echo "NestJS build failed! Build log:" && cat /tmp/build.log && exit 1)
-# Verify build output exists (NestJS outputs to dist/src/main.js, not dist/main.js)
-RUN test -f dist/src/main.js || (echo "ERROR: dist/src/main.js not found!" && echo "Contents of dist:" && find dist -name "*.js" -type f | head -10 && exit 1)
+RUN npx nest build
+RUN test -f dist/src/main.js || (echo "ERROR: dist/src/main.js not found!" && exit 1)
 
 # Production stage
 FROM node:20-alpine

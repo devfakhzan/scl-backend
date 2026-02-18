@@ -60,13 +60,12 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Update deployment with new image
-          # Container name is 'backend', not 'scl-backend'
-          kubectl set image deployment/scl-backend backend=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -n ${{ env.NAMESPACE }} || \
+          # Update deployment with new image (use sha-tagged image for both containers in a single command)
+          kubectl set image deployment/scl-backend \
+            backend=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            prisma-migrate=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -n ${{ env.NAMESPACE }} || \
           echo "Deployment not found. Please ensure infrastructure repo has deployed the base deployment first."
-          
-          # Also update init container if it exists
-          kubectl set image deployment/scl-backend prisma-migrate=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -n ${{ env.NAMESPACE }} || true
           
           # Wait for rollout
           kubectl rollout status deployment/scl-backend -n ${{ env.NAMESPACE }} --timeout=5m || true

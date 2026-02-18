@@ -17,7 +17,6 @@ import { KickChatService } from './kick-chat.service'
     origin: '*',
     credentials: true,
   },
-  path: '/api/socket.io',
 })
 export class KickChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
   @WebSocketServer()
